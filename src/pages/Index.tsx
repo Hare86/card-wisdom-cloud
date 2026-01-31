@@ -82,14 +82,22 @@ const Index = () => {
       }));
     },
     enabled: !!user?.id,
+    staleTime: 0, // Always refetch on mount
+    refetchOnMount: true,
   });
 
-  // Set selected card when cards load
+  // Set selected card when cards load - also reset if cards change
   useEffect(() => {
-    if (cards.length > 0 && !selectedCard) {
-      setSelectedCard(cards[0]);
+    if (cards.length > 0) {
+      // Check if current selected card is still in the list
+      const currentCardStillExists = selectedCard && cards.some(c => c.id === selectedCard.id);
+      if (!currentCardStillExists) {
+        setSelectedCard(cards[0]);
+      }
+    } else {
+      setSelectedCard(null);
     }
-  }, [cards, selectedCard]);
+  }, [cards]);
 
   useEffect(() => {
     if (!loading && !user) {
