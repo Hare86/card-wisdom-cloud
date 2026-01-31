@@ -31,9 +31,12 @@ import {
   Calendar,
   CreditCard,
   TrendingUp,
-  X
+  X,
+  PieChart as PieChartIcon,
+  BarChart3
 } from "lucide-react";
 import { format } from "date-fns";
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from "recharts";
 
 interface Transaction {
   id: string;
@@ -70,6 +73,17 @@ const CATEGORY_COLORS: Record<string, string> = {
   utilities: "bg-gray-500/20 text-gray-500",
   other: "bg-muted text-muted-foreground",
 };
+
+const CHART_COLORS = [
+  "hsl(24, 95%, 53%)",   // orange - dining
+  "hsl(199, 89%, 48%)",  // blue - travel
+  "hsl(330, 81%, 60%)",  // pink - shopping
+  "hsl(142, 71%, 45%)",  // green - groceries
+  "hsl(48, 96%, 53%)",   // yellow - fuel
+  "hsl(271, 91%, 65%)",  // purple - entertainment
+  "hsl(215, 16%, 47%)",  // gray - utilities
+  "hsl(160, 84%, 39%)",  // primary
+];
 
 export default function Transactions() {
   const navigate = useNavigate();
@@ -206,6 +220,31 @@ export default function Transactions() {
     };
   }, [filteredTransactions]);
 
+  // Category breakdown for charts
+  const categoryBreakdown = useMemo(() => {
+    const breakdown: Record<string, { amount: number; count: number; points: number }> = {};
+    
+    filteredTransactions.forEach(tx => {
+      const cat = tx.category || "Other";
+      if (!breakdown[cat]) {
+        breakdown[cat] = { amount: 0, count: 0, points: 0 };
+      }
+      breakdown[cat].amount += tx.amount;
+      breakdown[cat].count += 1;
+      breakdown[cat].points += tx.points_earned || 0;
+    });
+    
+    return Object.entries(breakdown)
+      .map(([name, data], index) => ({
+        name: name.charAt(0).toUpperCase() + name.slice(1),
+        amount: data.amount,
+        count: data.count,
+        points: data.points,
+        color: CHART_COLORS[index % CHART_COLORS.length],
+      }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [filteredTransactions]);
+
   const clearFilters = () => {
     setSearchQuery("");
     setSelectedCategory("all");
@@ -330,6 +369,89 @@ export default function Transactions() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Category Breakdown Charts */}
+        {!loading && categoryBreakdown.length > 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            {/* Pie Chart - Spending Distribution */}
+            <Card className="glass-card">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <PieChartIcon className="w-5 h-5 text-primary" />
+                  <CardTitle className="text-lg">Spending by Category</CardTitle>
+                </div>
+                <CardDescription>Distribution of your spending across categories</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={280}>
+                  <PieChart>
+                    <Pie
+                      data={categoryBreakdown}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      paddingAngle={3}
+                      dataKey="amount"
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      labelLine={{ stroke: "hsl(var(--muted-foreground))", strokeWidth: 1 }}
+                    >
+                      {categoryBreakdown.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      formatter={(value: number) => [`₹${value.toLocaleString()}`, "Amount"]}
+                      contentStyle={{ 
+                        backgroundColor: "hsl(var(--card))", 
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px"
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            {/* Bar Chart - Category Comparison */}
+            <Card className="glass-card">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-secondary" />
+                  <CardTitle className="text-lg">Category Comparison</CardTitle>
+                </div>
+                <CardDescription>Amount spent and points earned per category</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={categoryBreakdown} layout="vertical">
+                    <XAxis type="number" tickFormatter={(value) => `₹${(value / 1000).toFixed(0)}k`} />
+                    <YAxis 
+                      type="category" 
+                      dataKey="name" 
+                      width={80}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <Tooltip 
+                      formatter={(value: number, name: string) => [
+                        name === "amount" ? `₹${value.toLocaleString()}` : value.toLocaleString(),
+                        name === "amount" ? "Amount" : "Points"
+                      ]}
+                      contentStyle={{ 
+                        backgroundColor: "hsl(var(--card))", 
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px"
+                      }}
+                    />
+                    <Legend />
+                    <Bar dataKey="amount" fill="hsl(160, 84%, 39%)" name="Amount (₹)" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="points" fill="hsl(43, 96%, 56%)" name="Points" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Filters */}
         <Card className="glass-card mb-6">
