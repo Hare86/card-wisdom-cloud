@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Upload,
   BarChart3,
+  Receipt,
   LogOut,
   Menu,
   Moon,
@@ -19,6 +20,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/" },
   { icon: Upload, label: "Upload", href: "/upload" },
+  { icon: Receipt, label: "Transactions", href: "/transactions" },
   { icon: BarChart3, label: "Analytics", href: "/analytics" },
 ];
 
