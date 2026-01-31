@@ -33,10 +33,11 @@ import {
   TrendingUp,
   X,
   PieChart as PieChartIcon,
-  BarChart3
+  BarChart3,
+  LineChart as LineChartIcon
 } from "lucide-react";
 import { format } from "date-fns";
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, LineChart, Line, CartesianGrid } from "recharts";
 
 interface Transaction {
   id: string;
@@ -245,6 +246,33 @@ export default function Transactions() {
       .sort((a, b) => b.amount - a.amount);
   }, [filteredTransactions]);
 
+  // Monthly spending trend
+  const monthlyTrend = useMemo(() => {
+    const monthlyData: Record<string, { amount: number; count: number; points: number }> = {};
+    
+    filteredTransactions.forEach(tx => {
+      const date = new Date(tx.transaction_date);
+      const monthKey = format(date, "yyyy-MM");
+      
+      if (!monthlyData[monthKey]) {
+        monthlyData[monthKey] = { amount: 0, count: 0, points: 0 };
+      }
+      monthlyData[monthKey].amount += tx.amount;
+      monthlyData[monthKey].count += 1;
+      monthlyData[monthKey].points += tx.points_earned || 0;
+    });
+    
+    return Object.entries(monthlyData)
+      .map(([month, data]) => ({
+        month,
+        monthLabel: format(new Date(month + "-01"), "MMM yyyy"),
+        amount: data.amount,
+        count: data.count,
+        points: data.points,
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+  }, [filteredTransactions]);
+
   const clearFilters = () => {
     setSearchQuery("");
     setSelectedCategory("all");
@@ -451,6 +479,67 @@ export default function Transactions() {
               </CardContent>
             </Card>
           </div>
+        )}
+
+        {/* Monthly Spending Trend */}
+        {!loading && monthlyTrend.length > 1 && (
+          <Card className="glass-card mb-6">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <LineChartIcon className="w-5 h-5 text-info" />
+                <CardTitle className="text-lg">Monthly Spending Trend</CardTitle>
+              </div>
+              <CardDescription>How your spending changes over time</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={monthlyTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis 
+                    dataKey="monthLabel" 
+                    tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                    axisLine={{ stroke: "hsl(var(--border))" }}
+                  />
+                  <YAxis 
+                    tickFormatter={(value) => `₹${(value / 1000).toFixed(0)}k`}
+                    tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                    axisLine={{ stroke: "hsl(var(--border))" }}
+                  />
+                  <Tooltip 
+                    formatter={(value: number, name: string) => [
+                      name === "amount" ? `₹${value.toLocaleString()}` : value.toLocaleString(),
+                      name === "amount" ? "Total Spent" : name === "points" ? "Points Earned" : "Transactions"
+                    ]}
+                    contentStyle={{ 
+                      backgroundColor: "hsl(var(--card))", 
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: "8px"
+                    }}
+                    labelStyle={{ color: "hsl(var(--foreground))" }}
+                  />
+                  <Legend />
+                  <Line 
+                    type="monotone" 
+                    dataKey="amount" 
+                    stroke="hsl(160, 84%, 39%)" 
+                    strokeWidth={3}
+                    dot={{ fill: "hsl(160, 84%, 39%)", strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6, stroke: "hsl(160, 84%, 39%)", strokeWidth: 2 }}
+                    name="Amount (₹)"
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="points" 
+                    stroke="hsl(43, 96%, 56%)" 
+                    strokeWidth={2}
+                    dot={{ fill: "hsl(43, 96%, 56%)", strokeWidth: 2, r: 3 }}
+                    activeDot={{ r: 5, stroke: "hsl(43, 96%, 56%)", strokeWidth: 2 }}
+                    name="Points"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
         )}
 
         {/* Filters */}
