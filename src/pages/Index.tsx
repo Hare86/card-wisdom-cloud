@@ -12,9 +12,10 @@ import { CategoryBreakdown } from "@/components/dashboard/CategoryBreakdown";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
 import { supabase } from "@/integrations/supabase/client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag, Laptop, CreditCard as CreditCardIcon, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -159,6 +160,7 @@ const Index = () => {
   const navigate = useNavigate();
   const { user, loading } = useAuth();
   const [selectedCard, setSelectedCard] = useState<CardData | null>(null);
+  const queryClient = useQueryClient();
 
   // Fetch credit cards from database
   const { data: cards = [], isLoading: cardsLoading } = useQuery({
@@ -186,6 +188,36 @@ const Index = () => {
     enabled: !!user?.id,
     staleTime: 0, // Always refetch on mount
     refetchOnMount: true,
+  });
+
+  // Delete card mutation
+  const deleteCardMutation = useMutation({
+    mutationFn: async (cardId: string) => {
+      // First delete associated transactions
+      const { error: txError } = await supabase
+        .from("transactions")
+        .delete()
+        .eq("card_id", cardId);
+      
+      if (txError) throw txError;
+
+      // Then delete the card
+      const { error: cardError } = await supabase
+        .from("credit_cards")
+        .delete()
+        .eq("id", cardId);
+      
+      if (cardError) throw cardError;
+    },
+    onSuccess: () => {
+      toast.success("Card deleted successfully");
+      queryClient.invalidateQueries({ queryKey: ["credit-cards"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    },
+    onError: (error) => {
+      console.error("Delete error:", error);
+      toast.error("Failed to delete card");
+    },
   });
 
   // Set selected card when cards load - also reset if cards change
@@ -300,6 +332,9 @@ const Index = () => {
                               {...card}
                               isSelected={selectedCard?.id === card.id}
                               onClick={() => setSelectedCard(card)}
+                              showDelete={true}
+                              onDelete={() => deleteCardMutation.mutate(card.id)}
+                              isDeleting={deleteCardMutation.isPending}
                             />
                           ))}
                         </div>
