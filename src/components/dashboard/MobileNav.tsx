@@ -7,24 +7,26 @@ import {
   CreditCard,
   LayoutDashboard,
   Upload,
-  Settings,
+  BarChart3,
   LogOut,
   Menu,
-  X,
-  Sparkles,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/contexts/ThemeContext";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/" },
   { icon: Upload, label: "Upload", href: "/upload" },
-  { icon: Settings, label: "Settings", href: "/settings" },
+  { icon: BarChart3, label: "Analytics", href: "/analytics" },
 ];
 
 export function MobileNav() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [open, setOpen] = useState(false);
 
   const handleSignOut = async () => {
@@ -82,8 +84,26 @@ export function MobileNav() {
                 ))}
               </nav>
 
-              {user && (
-                <div className="p-4 border-t border-sidebar-border">
+              <div className="p-4 border-t border-sidebar-border space-y-2">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-3"
+                  onClick={toggleTheme}
+                >
+                  {theme === "dark" ? (
+                    <>
+                      <Sun className="w-5 h-5" />
+                      Light Mode
+                    </>
+                  ) : (
+                    <>
+                      <Moon className="w-5 h-5" />
+                      Dark Mode
+                    </>
+                  )}
+                </Button>
+
+                {user && (
                   <Button
                     variant="ghost"
                     className="w-full justify-start gap-3 text-destructive hover:text-destructive hover:bg-destructive/10"
@@ -92,8 +112,8 @@ export function MobileNav() {
                     <LogOut className="w-5 h-5" />
                     Sign Out
                   </Button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </SheetContent>
         </Sheet>

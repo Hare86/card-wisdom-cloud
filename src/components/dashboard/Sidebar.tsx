@@ -5,7 +5,7 @@ import {
   CreditCard,
   LayoutDashboard,
   Upload,
-  Settings,
+  BarChart3,
   LogOut,
   Moon,
   Sun,
@@ -16,6 +16,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/" },
   { icon: Upload, label: "Upload", href: "/upload" },
+  { icon: BarChart3, label: "Analytics", href: "/analytics" },
 ];
 
 export function Sidebar() {
