@@ -130,10 +130,11 @@ export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterP
           navigate("/analytics");
           break;
         case "success":
-          // For milestones, show a success toast
+          // For milestones, show a congratulations toast with details
           toast({
-            title: "🎉 " + action.title,
-            description: "Bonus has been credited to your account!",
+            title: "🎉 Congratulations!",
+            description: `You've claimed: ${action.title}. ${action.description}`,
+            duration: 5000,
           });
           break;
         case "info":
@@ -153,10 +154,13 @@ export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterP
       // Remove from local state
       setActions((prev) => prev.filter((a) => a.id !== action.id));
       
-      toast({
-        title: "Action completed",
-        description: "This item has been marked as done.",
-      });
+      // Only show completion toast for non-success types (success already shows congrats)
+      if (action.type !== "success") {
+        toast({
+          title: "Action completed",
+          description: "This item has been marked as done.",
+        });
+      }
     } catch (error) {
       console.error("Error marking action as read:", error);
     }
