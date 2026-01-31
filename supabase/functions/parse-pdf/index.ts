@@ -457,6 +457,59 @@ serve(async (req) => {
       .update({ parsed_data: summary })
       .eq("id", documentId);
 
+    // Step 8b: Create or update credit card entry
+    if (detectedCard.confidence !== "low" && detectedCard.bankName !== "Unknown") {
+      const totalPointsFromStatement = summary.total_points_earned || 0;
+      
+      // Check if card already exists for this user (by bank + card name)
+      const { data: existingCards } = await supabase
+        .from("credit_cards")
+        .select("id, points")
+        .eq("user_id", userId)
+        .eq("bank_name", detectedCard.bankName)
+        .eq("card_name", detectedCard.cardName)
+        .limit(1);
+
+      if (existingCards && existingCards.length > 0) {
+        // Update existing card - add new points
+        const existingCard = existingCards[0];
+        await supabase
+          .from("credit_cards")
+          .update({ 
+            points: (existingCard.points || 0) + totalPointsFromStatement,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingCard.id);
+        console.log(`Updated existing card ${detectedCard.bankName} ${detectedCard.cardName} with ${totalPointsFromStatement} new points`);
+      } else {
+        // Create new card entry
+        const variantMap: Record<string, string> = {
+          "HDFC": "emerald",
+          "Axis": "gold",
+          "ICICI": "platinum",
+          "Amex": "gold",
+          "SBI": "emerald",
+        };
+        
+        const { error: cardError } = await supabase
+          .from("credit_cards")
+          .insert({
+            user_id: userId,
+            bank_name: detectedCard.bankName,
+            card_name: detectedCard.cardName,
+            points: totalPointsFromStatement,
+            point_value: 0.40, // Default point value
+            variant: variantMap[detectedCard.bankName] || "emerald",
+          });
+        
+        if (cardError) {
+          console.error("Error creating credit card:", cardError);
+        } else {
+          console.log(`Created new card: ${detectedCard.bankName} ${detectedCard.cardName} with ${totalPointsFromStatement} points`);
+        }
+      }
+    }
+
     // Step 9: Create document chunks for RAG
     const chunkTexts: string[] = [];
     

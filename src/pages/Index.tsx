@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sidebar } from "@/components/dashboard/Sidebar";
@@ -11,13 +11,21 @@ import { RecommendationCard } from "@/components/dashboard/RecommendationCard";
 import { CategoryBreakdown } from "@/components/dashboard/CategoryBreakdown";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
-import { useState } from "react";
-import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag, Laptop } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag, Laptop, CreditCard as CreditCardIcon } from "lucide-react";
 
-// Mock data
-const cards = [
-  { id: 1, bankName: "HDFC Bank", cardName: "Infinia", lastFour: "4582", points: 18000, value: 7200, variant: "emerald" as const },
-];
+type CardVariant = "emerald" | "gold" | "platinum";
+
+interface CardData {
+  id: string;
+  bankName: string;
+  cardName: string;
+  lastFour: string;
+  points: number;
+  value: number;
+  variant: CardVariant;
+}
 
 const rewardRates = [
   { category: "Travel", multiplier: "5x", icon: <Plane className="w-4 h-4 text-primary" /> },
@@ -48,7 +56,40 @@ const categories = [
 const Index = () => {
   const navigate = useNavigate();
   const { user, loading } = useAuth();
-  const [selectedCard, setSelectedCard] = useState(cards[0]);
+  const [selectedCard, setSelectedCard] = useState<CardData | null>(null);
+
+  // Fetch credit cards from database
+  const { data: cards = [], isLoading: cardsLoading } = useQuery({
+    queryKey: ["credit-cards", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return [];
+      const { data, error } = await supabase
+        .from("credit_cards")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      
+      if (error) throw error;
+      
+      return (data || []).map((card) => ({
+        id: card.id,
+        bankName: card.bank_name,
+        cardName: card.card_name,
+        lastFour: card.last_four || "****",
+        points: card.points || 0,
+        value: Math.round((card.points || 0) * (card.point_value || 0.4)),
+        variant: (card.variant as CardVariant) || "emerald",
+      }));
+    },
+    enabled: !!user?.id,
+  });
+
+  // Set selected card when cards load
+  useEffect(() => {
+    if (cards.length > 0 && !selectedCard) {
+      setSelectedCard(cards[0]);
+    }
+  }, [cards, selectedCard]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -56,7 +97,7 @@ const Index = () => {
     }
   }, [user, loading, navigate]);
 
-  if (loading) {
+  if (loading || cardsLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -89,7 +130,7 @@ const Index = () => {
           <StatsCard
             title="Total Points"
             value={totalPoints.toLocaleString()}
-            subtitle="Across 1 card"
+            subtitle={`Across ${cards.length} card${cards.length !== 1 ? 's' : ''}`}
             icon={Coins}
             trend={{ value: "12%", positive: true }}
             variant="primary"
@@ -125,25 +166,34 @@ const Index = () => {
             {/* Cards Carousel */}
             <div className="glass-card rounded-xl p-4 lg:p-6">
               <h3 className="text-lg font-semibold mb-4">Your Cards</h3>
-              <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 lg:mx-0 lg:px-0">
-                {cards.map((card) => (
-                  <div key={card.id} className="flex-shrink-0">
-                    <CreditCard
-                      {...card}
-                      isSelected={selectedCard.id === card.id}
-                      onClick={() => setSelectedCard(card)}
-                    />
-                  </div>
-                ))}
-              </div>
+              {cards.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                  <CreditCardIcon className="w-12 h-12 mb-3 opacity-50" />
+                  <p className="text-sm">No cards yet. Upload a statement to get started.</p>
+                </div>
+              ) : (
+                <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4 lg:mx-0 lg:px-0">
+                  {cards.map((card) => (
+                    <div key={card.id} className="flex-shrink-0">
+                      <CreditCard
+                        {...card}
+                        isSelected={selectedCard?.id === card.id}
+                        onClick={() => setSelectedCard(card)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Benefits Tabs */}
-            <BenefitTabs
-              cardName={selectedCard.cardName}
-              rates={rewardRates}
-              bestRedemption="Transfer to KrisFlyer for 1.8x value on business class awards"
-            />
+            {selectedCard && (
+              <BenefitTabs
+                cardName={selectedCard.cardName}
+                rates={rewardRates}
+                bestRedemption="Transfer to KrisFlyer for 1.8x value on business class awards"
+              />
+            )}
 
             {/* Recommendations */}
             <RecommendationCard recommendations={recommendations} />
