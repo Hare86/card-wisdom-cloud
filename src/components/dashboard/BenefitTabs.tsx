@@ -1,5 +1,5 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plane, Utensils, ShoppingBag, Gift, HelpCircle } from "lucide-react";
+import { Plane, Utensils, ShoppingBag, Gift, HelpCircle, CreditCard, Shield } from "lucide-react";
 
 interface BenefitRate {
   category: string;
@@ -7,13 +7,33 @@ interface BenefitRate {
   icon: React.ReactNode;
 }
 
+interface BenefitItem {
+  title: string;
+  description: string;
+  icon: "lounge" | "cashback" | "milestone" | "insurance";
+}
+
 interface BenefitTabsProps {
   cardName: string;
   rates: BenefitRate[];
   bestRedemption: string;
+  benefits?: BenefitItem[];
 }
 
-export function BenefitTabs({ cardName, rates, bestRedemption }: BenefitTabsProps) {
+const benefitIcons = {
+  lounge: <Plane className="w-5 h-5 text-primary" />,
+  cashback: <CreditCard className="w-5 h-5 text-primary" />,
+  milestone: <Gift className="w-5 h-5 text-secondary" />,
+  insurance: <Shield className="w-5 h-5 text-info" />,
+};
+
+export function BenefitTabs({ cardName, rates, bestRedemption, benefits }: BenefitTabsProps) {
+  const defaultBenefits: BenefitItem[] = [
+    { title: "Airport Lounge Access", description: "Unlimited domestic + 6 international/year", icon: "lounge" },
+    { title: "Milestone Benefits", description: "Bonus points on annual spend targets", icon: "milestone" },
+  ];
+
+  const displayBenefits = benefits || defaultBenefits;
   return (
     <div className="glass-card rounded-xl p-6">
       <h3 className="text-lg font-semibold mb-4">{cardName} Benefits</h3>
@@ -54,20 +74,15 @@ export function BenefitTabs({ cardName, rates, bestRedemption }: BenefitTabsProp
 
         <TabsContent value="benefits" className="mt-4 space-y-3">
           <div className="grid gap-3">
-            <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
-              <Plane className="w-5 h-5 text-primary" />
-              <div>
-                <p className="font-medium text-sm">Airport Lounge Access</p>
-                <p className="text-xs text-muted-foreground">Unlimited domestic + 6 international/year</p>
+            {displayBenefits.map((benefit, index) => (
+              <div key={index} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
+                {benefitIcons[benefit.icon]}
+                <div>
+                  <p className="font-medium text-sm">{benefit.title}</p>
+                  <p className="text-xs text-muted-foreground">{benefit.description}</p>
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
-              <Gift className="w-5 h-5 text-secondary" />
-              <div>
-                <p className="font-medium text-sm">Milestone Benefits</p>
-                <p className="text-xs text-muted-foreground">Bonus points on annual spend targets</p>
-              </div>
-            </div>
+            ))}
           </div>
         </TabsContent>
 
