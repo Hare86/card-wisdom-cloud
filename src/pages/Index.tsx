@@ -13,7 +13,15 @@ import { ChatInterface } from "@/components/chat/ChatInterface";
 import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag, Laptop, CreditCard as CreditCardIcon } from "lucide-react";
+import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag, Laptop, CreditCard as CreditCardIcon, Maximize2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 type CardVariant = "emerald" | "gold" | "platinum";
 
@@ -173,7 +181,39 @@ const Index = () => {
           <div className="lg:col-span-8 space-y-4 lg:space-y-6">
             {/* Cards Carousel */}
             <div className="glass-card rounded-xl p-4 lg:p-6">
-              <h3 className="text-lg font-semibold mb-4">Your Cards</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">Your Cards</h3>
+                {cards.length > 0 && (
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                      >
+                        <Maximize2 className="h-4 w-4" />
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+                      <DialogHeader>
+                        <DialogTitle className="text-xl font-semibold">Your Cards</DialogTitle>
+                      </DialogHeader>
+                      <div className="flex-1 overflow-y-auto py-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {cards.map((card) => (
+                            <CreditCard
+                              key={card.id}
+                              {...card}
+                              isSelected={selectedCard?.id === card.id}
+                              onClick={() => setSelectedCard(card)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                )}
+              </div>
               {cards.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
                   <CreditCardIcon className="w-12 h-12 mb-3 opacity-50" />
