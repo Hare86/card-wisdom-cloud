@@ -151,11 +151,7 @@ const getCardBenefits = (cardName: string, bankName: string) => {
 
 // Static actions removed - now fetched from database in ActionCenter component
 
-const recommendations = [
-  { title: "Transfer to KrisFlyer", description: "Your Infinia points get 1.8x value when transferred to Singapore Airlines", savings: "₹5,400", confidence: 94 },
-  { title: "Book Business Class to Singapore", description: "Sweet spot: BLR → SIN business class for 35,000 miles", savings: "₹45,000", confidence: 87 },
-  { title: "Combine points for hotel stay", description: "Transfer to Marriott for a 5-night stay at W Maldives", savings: "₹1,20,000", confidence: 72 },
-];
+// Recommendations are now generated dynamically in RecommendationCard component based on selected card
 
 // Categories are now fetched dynamically in CategoryBreakdown component
 
@@ -348,7 +344,13 @@ const Index = () => {
             })()}
 
             {/* Recommendations */}
-            <RecommendationCard recommendations={recommendations} />
+            <RecommendationCard 
+              cardName={selectedCard?.cardName}
+              bankName={selectedCard?.bankName}
+              points={selectedCard?.points}
+              pointValue={0.4}
+              loading={cardsLoading}
+            />
           </div>
 
           {/* Right Column - Alerts, Actions, Chat, Analytics */}
