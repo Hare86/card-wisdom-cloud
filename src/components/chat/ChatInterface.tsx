@@ -15,6 +15,7 @@ interface Message {
   timestamp: Date;
   cached?: boolean;
   model?: string;
+  followUpQuestions?: string[];
 }
 
 const suggestedQuestions = [
@@ -97,69 +98,92 @@ function ChatContent({
 
       {/* Messages */}
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={cn(
-              "flex gap-3",
-              message.role === "user" ? "justify-end" : "justify-start"
-            )}
-          >
-            {message.role === "assistant" && (
-              <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-                <Bot className="w-4 h-4 text-primary" />
-              </div>
-            )}
-            <div className={cn("max-w-[85%]", isExpanded && "max-w-[70%]")}>
-              <div
-                className={cn(
-                  "rounded-2xl px-4 py-3",
-                  message.role === "user"
-                    ? "bg-primary text-primary-foreground rounded-br-md"
-                    : "bg-muted/50 rounded-bl-md"
+        {messages.map((message, index) => (
+          <div key={message.id}>
+            <div
+              className={cn(
+                "flex gap-3",
+                message.role === "user" ? "justify-end" : "justify-start"
+              )}
+            >
+              {message.role === "assistant" && (
+                <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                  <Bot className="w-4 h-4 text-primary" />
+                </div>
+              )}
+              <div className={cn("max-w-[85%]", isExpanded && "max-w-[70%]")}>
+                <div
+                  className={cn(
+                    "rounded-2xl px-4 py-3",
+                    message.role === "user"
+                      ? "bg-primary text-primary-foreground rounded-br-md"
+                      : "bg-muted/50 rounded-bl-md"
+                  )}
+                >
+                  <div className="text-sm prose prose-sm dark:prose-invert max-w-none">
+                    <ReactMarkdown>{message.content}</ReactMarkdown>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-xs opacity-50">
+                      {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                    {message.cached && (
+                      <span className="text-xs px-1.5 py-0.5 bg-primary/20 rounded text-primary">⚡ cached</span>
+                    )}
+                    {message.model && (
+                      <span className="text-xs opacity-50">{message.model.split("/")[1]}</span>
+                    )}
+                  </div>
+                </div>
+                {message.role === "assistant" && message.id !== "1" && !message.id.startsWith("error") && (
+                  <div className="flex gap-1 mt-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => provideFeedback(message.id, 5)}
+                    >
+                      <ThumbsUp className="w-3 h-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => provideFeedback(message.id, 2)}
+                    >
+                      <ThumbsDown className="w-3 h-3" />
+                    </Button>
+                  </div>
                 )}
-              >
-                <div className="text-sm prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{message.content}</ReactMarkdown>
-                </div>
-                <div className="flex items-center gap-2 mt-1">
-                  <p className="text-xs opacity-50">
-                    {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </p>
-                  {message.cached && (
-                    <span className="text-xs px-1.5 py-0.5 bg-primary/20 rounded text-primary">⚡ cached</span>
-                  )}
-                  {message.model && (
-                    <span className="text-xs opacity-50">{message.model.split("/")[1]}</span>
-                  )}
-                </div>
               </div>
-              {message.role === "assistant" && message.id !== "1" && !message.id.startsWith("error") && (
-                <div className="flex gap-1 mt-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => provideFeedback(message.id, 5)}
-                  >
-                    <ThumbsUp className="w-3 h-3" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => provideFeedback(message.id, 2)}
-                  >
-                    <ThumbsDown className="w-3 h-3" />
-                  </Button>
+              {message.role === "user" && (
+                <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
+                  <User className="w-4 h-4" />
                 </div>
               )}
             </div>
-            {message.role === "user" && (
-              <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
-                <User className="w-4 h-4" />
-              </div>
-            )}
+
+            {/* Follow-up questions - show only for last assistant message */}
+            {message.role === "assistant" &&
+              message.followUpQuestions &&
+              message.followUpQuestions.length > 0 &&
+              index === messages.length - 1 &&
+              !isLoading && (
+                <div className="ml-11 mt-3">
+                  <p className="text-xs text-muted-foreground mb-2">Related questions:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {message.followUpQuestions.map((q, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setInput(q)}
+                        className="text-xs px-3 py-1.5 bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary rounded-full transition-colors"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
           </div>
         ))}
 
@@ -253,13 +277,13 @@ export function ChatInterface() {
 
     let assistantContent = "";
 
-    const updateAssistant = (chunk: string, cached?: boolean, model?: string) => {
+    const updateAssistant = (chunk: string, cached?: boolean, model?: string, followUpQuestions?: string[]) => {
       assistantContent += chunk;
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant" && last.id.startsWith("stream-")) {
           return prev.map((m, i) =>
-            i === prev.length - 1 ? { ...m, content: assistantContent, cached, model } : m
+            i === prev.length - 1 ? { ...m, content: assistantContent, cached, model, followUpQuestions: followUpQuestions || m.followUpQuestions } : m
           );
         }
         return [
@@ -271,6 +295,7 @@ export function ChatInterface() {
             timestamp: new Date(),
             cached,
             model,
+            followUpQuestions,
           },
         ];
       });
@@ -310,7 +335,7 @@ export function ChatInterface() {
       const contentType = response.headers.get("content-type");
       if (contentType?.includes("application/json")) {
         const data = await response.json();
-        updateAssistant(data.content, data.cached, data.model);
+        updateAssistant(data.content, data.cached, data.model, data.followUpQuestions);
         if (data.cached) {
           toast({ title: "⚡ Response from cache", description: "Faster and cheaper!" });
         }
@@ -340,8 +365,14 @@ export function ChatInterface() {
 
             try {
               const parsed = JSON.parse(jsonStr);
-              const content = parsed.choices?.[0]?.delta?.content;
-              if (content) updateAssistant(content);
+              
+              // Check if this is follow-up questions event
+              if (parsed.followUpQuestions) {
+                updateAssistant("", undefined, undefined, parsed.followUpQuestions);
+              } else {
+                const content = parsed.choices?.[0]?.delta?.content;
+                if (content) updateAssistant(content);
+              }
             } catch {
               buffer = line + "\n" + buffer;
               break;

@@ -95,6 +95,56 @@ Provide data-driven recommendations with specific numbers.`,
 Always include specific numbers and percentages.`,
 };
 
+// Generate follow-up questions based on context
+async function generateFollowUpQuestions(
+  query: string,
+  response: string,
+  context: string[],
+  apiKey: string
+): Promise<string[]> {
+  try {
+    const prompt = `Based on this conversation about credit card rewards, generate 4-6 relevant follow-up questions the user might want to ask next.
+
+User asked: "${query}"
+
+Assistant responded: "${response.substring(0, 500)}..."
+
+Context topics: ${context.slice(0, 3).join(", ")}
+
+Generate short, actionable questions (max 8 words each). Return ONLY a JSON array of strings, nothing else.
+Example: ["How do I redeem for flights?", "What's my best card for dining?"]`;
+
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 200,
+      }),
+    });
+
+    if (!res.ok) return [];
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content || "[]";
+    
+    // Parse JSON from response
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      const questions = JSON.parse(jsonMatch[0]);
+      return questions.slice(0, 6);
+    }
+    return [];
+  } catch (error) {
+    console.error("Error generating follow-up questions:", error);
+    return [];
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -153,12 +203,21 @@ serve(async (req) => {
         cache_hit: true,
       });
 
+      // Generate follow-up questions for cached response
+      const followUpQuestions = await generateFollowUpQuestions(
+        lastMessage,
+        cachedResponse.response,
+        [],
+        LOVABLE_API_KEY
+      );
+
       // Return cached response (non-streaming for cache hits)
       return new Response(
         JSON.stringify({ 
           content: cachedResponse.response, 
           cached: true,
-          model: cachedResponse.model_used 
+          model: cachedResponse.model_used,
+          followUpQuestions,
         }),
         {
           status: 200,
@@ -340,9 +399,39 @@ serve(async (req) => {
         },
       });
 
+      // Generate follow-up questions
+      const followUpQuestions = await generateFollowUpQuestions(
+        lastMessage,
+        "",
+        [...contextChunks, ...benefitsContext],
+        LOVABLE_API_KEY
+      );
+
       const transformedStream = response.body!.pipeThrough(transformStream);
 
-      return new Response(transformedStream, {
+      // For streaming, we append follow-up questions as a final SSE event
+      const questionEvent = `\n\ndata: ${JSON.stringify({ followUpQuestions })}\n\n`;
+      const questionBytes = new TextEncoder().encode(questionEvent);
+
+      const combinedStream = new ReadableStream({
+        async start(controller) {
+          const reader = transformedStream.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              controller.enqueue(value);
+            }
+            // Append follow-up questions at the end
+            controller.enqueue(questionBytes);
+            controller.close();
+          } catch (e) {
+            controller.error(e);
+          }
+        },
+      });
+
+      return new Response(combinedStream, {
         headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
       });
     } else {
@@ -377,7 +466,15 @@ serve(async (req) => {
         cache_hit: false,
       });
 
-      return new Response(JSON.stringify({ content, model: selectedModel, cached: false }), {
+      // Generate follow-up questions
+      const followUpQuestions = await generateFollowUpQuestions(
+        lastMessage,
+        content,
+        [...contextChunks, ...benefitsContext],
+        LOVABLE_API_KEY
+      );
+
+      return new Response(JSON.stringify({ content, model: selectedModel, cached: false, followUpQuestions }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
