@@ -102,11 +102,7 @@ const getCardBenefits = (cardName: string, bankName: string) => {
   return defaultCardBenefits;
 };
 
-const actions = [
-  { type: "warning" as const, title: "1,250 points expiring soon", description: "Axis Atlas points expire in 15 days", actionLabel: "View Options" },
-  { type: "success" as const, title: "Milestone achieved!", description: "Reached ₹2L annual spend on Infinia", actionLabel: "Claim Bonus" },
-  { type: "info" as const, title: "New transfer partner added", description: "Turkish Airlines now available for Infinia", actionLabel: "Learn More" },
-];
+// Static actions removed - now fetched from database in ActionCenter component
 
 const recommendations = [
   { title: "Transfer to KrisFlyer", description: "Your Infinia points get 1.8x value when transferred to Singapore Airlines", savings: "₹5,400", confidence: 94 },
@@ -314,7 +310,10 @@ const Index = () => {
           {/* Right Column - Alerts, Actions, Chat, Analytics */}
           <div className="lg:col-span-4 space-y-4 lg:space-y-6">
             <AlertsPanel />
-            <ActionCenter actions={actions} />
+            <ActionCenter 
+              selectedCardId={selectedCard?.id} 
+              selectedCardName={selectedCard?.cardName} 
+            />
             <CategoryBreakdown categories={categories} totalSpend={110000} />
             <ChatInterface />
           </div>
