@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, TrendingUp, Sparkles, ArrowRight, Maximize2, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { AlertTriangle, TrendingUp, Sparkles, ArrowRight, Maximize2, Loader2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 
 interface Action {
   id: string;
@@ -47,7 +49,9 @@ const actionLabelMap: Record<string, string> = {
 };
 
 export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterProps) {
+  const navigate = useNavigate();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [actions, setActions] = useState<Action[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -107,6 +111,54 @@ export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterP
       setActions([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleActionClick = async (action: Action) => {
+    // If there's a custom action URL, navigate there
+    if (action.actionUrl) {
+      if (action.actionUrl.startsWith("http")) {
+        window.open(action.actionUrl, "_blank");
+      } else {
+        navigate(action.actionUrl);
+      }
+    } else {
+      // Default actions based on type
+      switch (action.type) {
+        case "warning":
+          // For expiring points, go to transactions/analytics
+          navigate("/analytics");
+          break;
+        case "success":
+          // For milestones, show a success toast
+          toast({
+            title: "🎉 " + action.title,
+            description: "Bonus has been credited to your account!",
+          });
+          break;
+        case "info":
+          // For info/promos, go to transactions
+          navigate("/transactions");
+          break;
+      }
+    }
+
+    // Mark action as read
+    try {
+      await supabase
+        .from("user_alerts")
+        .update({ is_read: true })
+        .eq("id", action.id);
+      
+      // Remove from local state
+      setActions((prev) => prev.filter((a) => a.id !== action.id));
+      
+      toast({
+        title: "Action completed",
+        description: "This item has been marked as done.",
+      });
+    } catch (error) {
+      console.error("Error marking action as read:", error);
     }
   };
 
@@ -192,6 +244,10 @@ export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterP
                               variant="ghost"
                               size="sm"
                               className="text-sm text-primary hover:bg-primary/10 group-hover:translate-x-1 transition-transform"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleActionClick(action);
+                              }}
                             >
                               {action.actionLabel}
                               <ArrowRight className="w-4 h-4 ml-1" />
@@ -235,6 +291,10 @@ export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterP
                     variant="ghost"
                     size="sm"
                     className="text-xs text-primary hover:bg-primary/10 group-hover:translate-x-1 transition-transform"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleActionClick(action);
+                    }}
                   >
                     {action.actionLabel}
                     <ArrowRight className="w-3 h-3 ml-1" />
