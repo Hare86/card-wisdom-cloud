@@ -4,9 +4,16 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bell, AlertTriangle, CheckCircle2, Info, X, Loader2 } from "lucide-react";
+import { Bell, AlertTriangle, CheckCircle2, Info, X, Loader2, Maximize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 interface Alert {
   id: string;
@@ -112,6 +119,84 @@ export function AlertsPanel() {
             </Badge>
           )}
         </CardTitle>
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-xl font-semibold">
+                <Bell className="w-5 h-5 text-primary" />
+                All Alerts
+                {unreadCount > 0 && (
+                  <Badge variant="destructive" className="ml-2">
+                    {unreadCount}
+                  </Badge>
+                )}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 overflow-y-auto py-4">
+              {alerts.length === 0 ? (
+                <p className="text-center text-muted-foreground py-8">
+                  No alerts at this time
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {alerts.map((alert) => (
+                    <div
+                      key={alert.id}
+                      className={cn(
+                        "p-4 rounded-lg border transition-all",
+                        alert.is_read
+                          ? "bg-muted/30 border-border/50"
+                          : "bg-card border-primary/30"
+                      )}
+                      onClick={() => !alert.is_read && markAsRead(alert.id)}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div className={cn("p-2 rounded-lg", priorityColors[alert.priority])}>
+                            {alertIcons[alert.alert_type] || <Bell className="w-5 h-5" />}
+                          </div>
+                          <div>
+                            <p className={cn("font-medium", !alert.is_read && "text-foreground")}>
+                              {alert.title}
+                            </p>
+                            {alert.description && (
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {alert.description}
+                              </p>
+                            )}
+                            <p className="text-xs text-muted-foreground/60 mt-2">
+                              {new Date(alert.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            dismissAlert(alert.id);
+                          }}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </CardHeader>
       <CardContent>
         {alerts.length === 0 ? (
