@@ -10,6 +10,7 @@ import { ActionCenter } from "@/components/dashboard/ActionCenter";
 import { RecommendationCard } from "@/components/dashboard/RecommendationCard";
 import { CategoryBreakdown } from "@/components/dashboard/CategoryBreakdown";
 import { ChatInterface } from "@/components/chat/ChatInterface";
+import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
 import { useState } from "react";
 import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag, Laptop } from "lucide-react";
 
@@ -150,8 +151,9 @@ const Index = () => {
             <RecommendationCard recommendations={recommendations} />
           </div>
 
-          {/* Right Column - Actions, Chat, Analytics */}
+          {/* Right Column - Alerts, Actions, Chat, Analytics */}
           <div className="lg:col-span-4 space-y-4 lg:space-y-6">
+            <AlertsPanel />
             <ActionCenter actions={actions} />
             <CategoryBreakdown categories={categories} totalSpend={110000} />
             <ChatInterface />

@@ -1,1 +1,16 @@
 project_id = "sjwdbubmrnsycfgtzhga"
+
+[functions.chat]
+verify_jwt = false
+
+[functions.parse-pdf]
+verify_jwt = false
+
+[functions.rag-chat]
+verify_jwt = false
+
+[functions.scrape-benefits]
+verify_jwt = false
+
+[functions.analytics]
+verify_jwt = false
