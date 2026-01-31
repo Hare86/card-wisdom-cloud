@@ -98,35 +98,35 @@ function categorizeTransaction(description: string): string {
 
 // Card detection patterns
 const CARD_PATTERNS: { pattern: RegExp; cardName: string; bankName: string }[] = [
-  // HDFC Cards
-  { pattern: /hdfc.*infinia/i, cardName: "Infinia", bankName: "HDFC" },
-  { pattern: /hdfc.*diners.*black/i, cardName: "Diners Club Black", bankName: "HDFC" },
-  { pattern: /hdfc.*regalia/i, cardName: "Regalia", bankName: "HDFC" },
-  { pattern: /hdfc.*moneyback/i, cardName: "MoneyBack", bankName: "HDFC" },
-  { pattern: /hdfc.*millennia/i, cardName: "Millennia", bankName: "HDFC" },
+  // HDFC Cards - specific patterns first
+  { pattern: /infinia/i, cardName: "Infinia", bankName: "HDFC" },
+  { pattern: /diners.*black/i, cardName: "Diners Club Black", bankName: "HDFC" },
+  { pattern: /regalia/i, cardName: "Regalia", bankName: "HDFC" },
+  { pattern: /moneyback/i, cardName: "MoneyBack", bankName: "HDFC" },
+  { pattern: /millennia/i, cardName: "Millennia", bankName: "HDFC" },
   { pattern: /hdfc.*swiggy/i, cardName: "Swiggy", bankName: "HDFC" },
-  { pattern: /hdfc.*tata.*neu/i, cardName: "Tata Neu", bankName: "HDFC" },
+  { pattern: /tata.*neu/i, cardName: "Tata Neu", bankName: "HDFC" },
   // Axis Cards
-  { pattern: /axis.*atlas/i, cardName: "Atlas", bankName: "Axis" },
+  { pattern: /atlas/i, cardName: "Atlas", bankName: "Axis" },
   { pattern: /axis.*reserve/i, cardName: "Reserve", bankName: "Axis" },
-  { pattern: /axis.*magnus/i, cardName: "Magnus", bankName: "Axis" },
+  { pattern: /magnus/i, cardName: "Magnus", bankName: "Axis" },
   { pattern: /axis.*flipkart/i, cardName: "Flipkart", bankName: "Axis" },
   { pattern: /axis.*ace/i, cardName: "Ace", bankName: "Axis" },
   // ICICI Cards
-  { pattern: /icici.*emeralde/i, cardName: "Emeralde", bankName: "ICICI" },
-  { pattern: /icici.*sapphiro/i, cardName: "Sapphiro", bankName: "ICICI" },
+  { pattern: /emeralde/i, cardName: "Emeralde", bankName: "ICICI" },
+  { pattern: /sapphiro/i, cardName: "Sapphiro", bankName: "ICICI" },
   { pattern: /icici.*amazon.*pay/i, cardName: "Amazon Pay", bankName: "ICICI" },
-  { pattern: /icici.*coral/i, cardName: "Coral", bankName: "ICICI" },
+  { pattern: /coral/i, cardName: "Coral", bankName: "ICICI" },
   // SBI Cards
   { pattern: /sbi.*elite/i, cardName: "Elite", bankName: "SBI" },
   { pattern: /sbi.*prime/i, cardName: "Prime", bankName: "SBI" },
-  { pattern: /sbi.*simplysave/i, cardName: "SimplySave", bankName: "SBI" },
+  { pattern: /simplysave/i, cardName: "SimplySave", bankName: "SBI" },
   // Amex Cards
   { pattern: /amex.*platinum/i, cardName: "Platinum", bankName: "Amex" },
   { pattern: /american.*express.*platinum/i, cardName: "Platinum", bankName: "Amex" },
   { pattern: /amex.*gold/i, cardName: "Gold", bankName: "Amex" },
-  { pattern: /amex.*mrcc/i, cardName: "MRCC", bankName: "Amex" },
-  // Generic bank detection
+  { pattern: /amex.*mrcc|membership.*rewards/i, cardName: "MRCC", bankName: "Amex" },
+  // Generic bank detection (lower priority)
   { pattern: /hdfc\s*(bank)?.*credit\s*card/i, cardName: "Generic", bankName: "HDFC" },
   { pattern: /axis\s*(bank)?.*credit\s*card/i, cardName: "Generic", bankName: "Axis" },
   { pattern: /icici\s*(bank)?.*credit\s*card/i, cardName: "Generic", bankName: "ICICI" },
