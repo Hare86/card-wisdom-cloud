@@ -35,12 +35,72 @@ interface CardData {
   variant: CardVariant;
 }
 
-const rewardRates = [
-  { category: "Travel", multiplier: "5x", icon: <Plane className="w-4 h-4 text-primary" /> },
-  { category: "Dining", multiplier: "3x", icon: <Utensils className="w-4 h-4 text-secondary" /> },
-  { category: "Online Shopping", multiplier: "2x", icon: <Laptop className="w-4 h-4 text-info" /> },
-  { category: "Other", multiplier: "1x", icon: <ShoppingBag className="w-4 h-4 text-muted-foreground" /> },
-];
+// Card-specific reward rates and benefits
+const cardBenefitsData: Record<string, {
+  rates: { category: string; multiplier: string; icon: React.ReactNode }[];
+  bestRedemption: string;
+  benefits: { title: string; description: string; icon: "lounge" | "cashback" | "milestone" | "insurance" }[];
+}> = {
+  "HDFC": {
+    rates: [
+      { category: "Travel", multiplier: "5x", icon: <Plane className="w-4 h-4 text-primary" /> },
+      { category: "Dining", multiplier: "3x", icon: <Utensils className="w-4 h-4 text-secondary" /> },
+      { category: "Online Shopping", multiplier: "2x", icon: <Laptop className="w-4 h-4 text-info" /> },
+      { category: "Other", multiplier: "1x", icon: <ShoppingBag className="w-4 h-4 text-muted-foreground" /> },
+    ],
+    bestRedemption: "Transfer to KrisFlyer for 1.8x value on business class awards",
+    benefits: [
+      { title: "Airport Lounge Access", description: "Unlimited domestic + 6 international/year", icon: "lounge" },
+      { title: "Milestone Benefits", description: "Bonus 2,500 points on ₹8L annual spend", icon: "milestone" },
+    ],
+  },
+  "MoneyBack": {
+    rates: [
+      { category: "Groceries", multiplier: "5x", icon: <ShoppingBag className="w-4 h-4 text-primary" /> },
+      { category: "Utilities", multiplier: "2x", icon: <Laptop className="w-4 h-4 text-secondary" /> },
+      { category: "Fuel", multiplier: "2x", icon: <Plane className="w-4 h-4 text-info" /> },
+      { category: "Other", multiplier: "1x", icon: <ShoppingBag className="w-4 h-4 text-muted-foreground" /> },
+    ],
+    bestRedemption: "Direct cashback to statement - no transfer needed, instant value",
+    benefits: [
+      { title: "Cashback Rewards", description: "Direct statement credit, no conversion hassle", icon: "cashback" },
+      { title: "Fuel Surcharge Waiver", description: "1% waiver on fuel transactions (up to ₹250/month)", icon: "insurance" },
+    ],
+  },
+  "Amex": {
+    rates: [
+      { category: "Travel", multiplier: "4x", icon: <Plane className="w-4 h-4 text-primary" /> },
+      { category: "Dining", multiplier: "4x", icon: <Utensils className="w-4 h-4 text-secondary" /> },
+      { category: "Entertainment", multiplier: "3x", icon: <Laptop className="w-4 h-4 text-info" /> },
+      { category: "Other", multiplier: "1x", icon: <ShoppingBag className="w-4 h-4 text-muted-foreground" /> },
+    ],
+    bestRedemption: "Transfer to Marriott Bonvoy for 1:1 hotel points with 5th night free",
+    benefits: [
+      { title: "Premium Lounge Access", description: "Priority Pass + Amex lounges worldwide", icon: "lounge" },
+      { title: "Travel Insurance", description: "Complimentary travel insurance up to ₹50L", icon: "insurance" },
+    ],
+  },
+};
+
+// Default fallback for unknown cards
+const defaultCardBenefits = {
+  rates: [
+    { category: "All Purchases", multiplier: "1x", icon: <ShoppingBag className="w-4 h-4 text-primary" /> },
+  ],
+  bestRedemption: "Redeem points for statement credit or gift vouchers",
+  benefits: [
+    { title: "Standard Rewards", description: "Earn points on all purchases", icon: "milestone" as const },
+  ],
+};
+
+// Helper to get card benefits based on card name or bank
+const getCardBenefits = (cardName: string, bankName: string) => {
+  // Check card name first, then bank name
+  if (cardName.toLowerCase().includes("moneyback")) return cardBenefitsData["MoneyBack"];
+  if (cardName.toLowerCase().includes("amex") || bankName.toLowerCase().includes("amex") || bankName.toLowerCase().includes("american express")) return cardBenefitsData["Amex"];
+  if (bankName.toLowerCase().includes("hdfc")) return cardBenefitsData["HDFC"];
+  return defaultCardBenefits;
+};
 
 const actions = [
   { type: "warning" as const, title: "1,250 points expiring soon", description: "Axis Atlas points expire in 15 days", actionLabel: "View Options" },
@@ -235,13 +295,17 @@ const Index = () => {
             </div>
 
             {/* Benefits Tabs */}
-            {selectedCard && (
-              <BenefitTabs
-                cardName={selectedCard.cardName}
-                rates={rewardRates}
-                bestRedemption="Transfer to KrisFlyer for 1.8x value on business class awards"
-              />
-            )}
+            {selectedCard && (() => {
+              const cardBenefits = getCardBenefits(selectedCard.cardName, selectedCard.bankName);
+              return (
+                <BenefitTabs
+                  cardName={selectedCard.cardName}
+                  rates={cardBenefits.rates}
+                  bestRedemption={cardBenefits.bestRedemption}
+                  benefits={cardBenefits.benefits}
+                />
+              );
+            })()}
 
             {/* Recommendations */}
             <RecommendationCard recommendations={recommendations} />
