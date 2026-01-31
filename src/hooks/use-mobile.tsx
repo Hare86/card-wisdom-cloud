@@ -7,11 +7,18 @@ export function useIsMobile() {
 
   React.useEffect(() => {
     const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    const onChange = () => {
-      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    
+    // Use matchMedia result instead of innerWidth to avoid forced reflow
+    const onChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      setIsMobile(!e.matches);
     };
+    
+    // Use requestAnimationFrame to batch with paint and avoid forced reflow
+    requestAnimationFrame(() => {
+      onChange(mql);
+    });
+    
     mql.addEventListener("change", onChange);
-    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
     return () => mql.removeEventListener("change", onChange);
   }, []);
 
