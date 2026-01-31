@@ -1,5 +1,17 @@
 import { cn } from "@/lib/utils";
-import { CreditCard as CreditCardIcon, Wifi } from "lucide-react";
+import { CreditCard as CreditCardIcon, Wifi, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface CreditCardProps {
   bankName: string;
@@ -10,6 +22,9 @@ interface CreditCardProps {
   variant?: "emerald" | "gold" | "platinum";
   isSelected?: boolean;
   onClick?: () => void;
+  onDelete?: () => void;
+  showDelete?: boolean;
+  isDeleting?: boolean;
 }
 
 export function CreditCard({
@@ -21,6 +36,9 @@ export function CreditCard({
   variant = "emerald",
   isSelected = false,
   onClick,
+  onDelete,
+  showDelete = false,
+  isDeleting = false,
 }: CreditCardProps) {
   const variants = {
     emerald: "credit-card-gradient",
@@ -39,6 +57,43 @@ export function CreditCard({
           : "hover:scale-[1.02] hover:shadow-lg"
       )}
     >
+      {/* Delete button */}
+      {showDelete && onDelete && (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute top-2 left-2 h-8 w-8 bg-black/30 hover:bg-destructive/80 text-white/70 hover:text-white backdrop-blur-sm rounded-full z-10"
+              onClick={(e) => e.stopPropagation()}
+              disabled={isDeleting}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {cardName}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete this card and all its associated transactions. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {isDeleting ? "Deleting..." : "Delete Card"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+
       {/* Card chip and contactless */}
       <div className="flex items-center justify-between mb-8">
         <div className="w-12 h-9 bg-gradient-to-br from-yellow-300 to-yellow-500 rounded-md flex items-center justify-center">
