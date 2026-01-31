@@ -1,5 +1,6 @@
+import { useEffect, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import { Maximize2 } from "lucide-react";
+import { Maximize2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -8,6 +9,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Category {
   name: string;
@@ -16,15 +19,134 @@ interface Category {
 }
 
 interface CategoryBreakdownProps {
-  categories: Category[];
-  totalSpend: number;
+  selectedCardId?: string | null;
+  selectedCardName?: string;
 }
 
-export function CategoryBreakdown({ categories, totalSpend }: CategoryBreakdownProps) {
+// Category colors mapping
+const categoryColors: Record<string, string> = {
+  travel: "hsl(160, 84%, 39%)",
+  dining: "hsl(43, 96%, 56%)",
+  shopping: "hsl(199, 89%, 48%)",
+  groceries: "hsl(280, 65%, 60%)",
+  utilities: "hsl(340, 75%, 55%)",
+  fuel: "hsl(25, 95%, 53%)",
+  entertainment: "hsl(265, 83%, 57%)",
+  other: "hsl(222, 40%, 40%)",
+};
+
+// Get color for a category (case-insensitive)
+const getCategoryColor = (categoryName: string): string => {
+  const normalizedName = categoryName.toLowerCase();
+  return categoryColors[normalizedName] || categoryColors.other;
+};
+
+export function CategoryBreakdown({ selectedCardId, selectedCardName }: CategoryBreakdownProps) {
+  const { user } = useAuth();
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [totalSpend, setTotalSpend] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (user) {
+      fetchCategoryData();
+    }
+  }, [user, selectedCardId]);
+
+  const fetchCategoryData = async () => {
+    try {
+      setLoading(true);
+
+      // Build query based on selected card
+      let query = supabase
+        .from("transactions")
+        .select("category, amount")
+        .eq("user_id", user!.id);
+
+      // Filter by selected card if provided
+      if (selectedCardId) {
+        query = query.eq("card_id", selectedCardId);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      // Aggregate by category
+      const categoryMap: Record<string, number> = {};
+      let total = 0;
+
+      (data || []).forEach((transaction) => {
+        const category = transaction.category || "Other";
+        const amount = Math.abs(transaction.amount || 0);
+        categoryMap[category] = (categoryMap[category] || 0) + amount;
+        total += amount;
+      });
+
+      // Convert to array and sort by value
+      const categoryArray: Category[] = Object.entries(categoryMap)
+        .map(([name, value]) => ({
+          name,
+          value: Math.round(value),
+          color: getCategoryColor(name),
+        }))
+        .sort((a, b) => b.value - a.value);
+
+      setCategories(categoryArray);
+      setTotalSpend(Math.round(total));
+    } catch (error) {
+      console.error("Error fetching category data:", error);
+      setCategories([]);
+      setTotalSpend(0);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="glass-card rounded-xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Spending by Category</h3>
+        </div>
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="w-6 h-6 animate-spin text-primary" />
+        </div>
+      </div>
+    );
+  }
+
+  if (categories.length === 0) {
+    return (
+      <div className="glass-card rounded-xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold">Spending by Category</h3>
+            {selectedCardName && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Showing for {selectedCardName}
+              </p>
+            )}
+          </div>
+        </div>
+        <p className="text-center text-muted-foreground py-8 text-sm">
+          No spending data available{selectedCardName ? ` for ${selectedCardName}` : ""}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="glass-card rounded-xl p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold">Spending by Category</h3>
+        <div>
+          <h3 className="text-lg font-semibold">Spending by Category</h3>
+          {selectedCardName && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Showing for {selectedCardName}
+            </p>
+          )}
+        </div>
         <Dialog>
           <DialogTrigger asChild>
             <Button
@@ -37,7 +159,14 @@ export function CategoryBreakdown({ categories, totalSpend }: CategoryBreakdownP
           </DialogTrigger>
           <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
             <DialogHeader>
-              <DialogTitle className="text-xl font-semibold">Spending by Category</DialogTitle>
+              <DialogTitle className="text-xl font-semibold">
+                Spending by Category
+                {selectedCardName && (
+                  <span className="text-sm font-normal text-muted-foreground ml-2">
+                    • {selectedCardName}
+                  </span>
+                )}
+              </DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto py-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -77,7 +206,7 @@ export function CategoryBreakdown({ categories, totalSpend }: CategoryBreakdownP
                 {/* Category Details */}
                 <div className="space-y-4">
                   <div className="p-4 bg-primary/10 border border-primary/20 rounded-lg">
-                    <p className="text-sm text-muted-foreground">Total Monthly Spend</p>
+                    <p className="text-sm text-muted-foreground">Total Spend</p>
                     <p className="text-3xl font-bold mt-1">₹{totalSpend.toLocaleString()}</p>
                   </div>
 
@@ -97,7 +226,7 @@ export function CategoryBreakdown({ categories, totalSpend }: CategoryBreakdownP
                         <div className="text-right">
                           <p className="font-bold">₹{category.value.toLocaleString()}</p>
                           <p className="text-xs text-muted-foreground">
-                            {Math.round((category.value / totalSpend) * 100)}% of total
+                            {totalSpend > 0 ? Math.round((category.value / totalSpend) * 100) : 0}% of total
                           </p>
                         </div>
                       </div>
@@ -129,8 +258,8 @@ export function CategoryBreakdown({ categories, totalSpend }: CategoryBreakdownP
               </Pie>
               <Tooltip
                 contentStyle={{
-                  backgroundColor: "hsl(222 47% 10%)",
-                  border: "1px solid hsl(222 40% 16%)",
+                  backgroundColor: "hsl(var(--background))",
+                  border: "1px solid hsl(var(--border))",
                   borderRadius: "8px",
                   fontSize: "12px",
                 }}
@@ -141,7 +270,7 @@ export function CategoryBreakdown({ categories, totalSpend }: CategoryBreakdownP
         </div>
 
         <div className="flex-1 space-y-2">
-          {categories.map((category, index) => (
+          {categories.slice(0, 4).map((category, index) => (
             <div key={index} className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div
@@ -151,16 +280,21 @@ export function CategoryBreakdown({ categories, totalSpend }: CategoryBreakdownP
                 <span className="text-sm">{category.name}</span>
               </div>
               <span className="text-sm font-medium">
-                {Math.round((category.value / totalSpend) * 100)}%
+                {totalSpend > 0 ? Math.round((category.value / totalSpend) * 100) : 0}%
               </span>
             </div>
           ))}
+          {categories.length > 4 && (
+            <p className="text-xs text-muted-foreground text-center pt-1">
+              +{categories.length - 4} more categories
+            </p>
+          )}
         </div>
       </div>
 
       <div className="mt-4 pt-4 border-t border-border/50">
         <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">Total Monthly Spend</span>
+          <span className="text-sm text-muted-foreground">Total Spend</span>
           <span className="text-lg font-bold">₹{totalSpend.toLocaleString()}</span>
         </div>
       </div>

@@ -157,12 +157,7 @@ const recommendations = [
   { title: "Combine points for hotel stay", description: "Transfer to Marriott for a 5-night stay at W Maldives", savings: "₹1,20,000", confidence: 72 },
 ];
 
-const categories = [
-  { name: "Travel", value: 45000, color: "hsl(160, 84%, 39%)" },
-  { name: "Dining", value: 28000, color: "hsl(43, 96%, 56%)" },
-  { name: "Shopping", value: 22000, color: "hsl(199, 89%, 48%)" },
-  { name: "Other", value: 15000, color: "hsl(222, 40%, 40%)" },
-];
+// Categories are now fetched dynamically in CategoryBreakdown component
 
 const Index = () => {
   const navigate = useNavigate();
@@ -363,7 +358,10 @@ const Index = () => {
               selectedCardId={selectedCard?.id} 
               selectedCardName={selectedCard?.cardName} 
             />
-            <CategoryBreakdown categories={categories} totalSpend={110000} />
+            <CategoryBreakdown 
+              selectedCardId={selectedCard?.id} 
+              selectedCardName={selectedCard?.cardName} 
+            />
             <ChatInterface />
           </div>
         </div>
