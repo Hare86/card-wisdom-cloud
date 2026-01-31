@@ -186,10 +186,13 @@ export default function Upload() {
       if (error) throw error;
 
       const method = data.extraction_method === "ai_vision" ? "AI Vision" : "Text Parser";
+      const detectedInfo = data.detected_card 
+        ? `Detected: ${data.detected_card.bank_name} ${data.detected_card.card_name} (${data.detected_card.confidence} confidence)`
+        : "";
       
       toast({
         title: "Document parsed successfully",
-        description: `Extracted ${data.transactions_parsed} transactions using ${method}. ${data.pii_masked} PII fields were masked.`,
+        description: `Extracted ${data.transactions_parsed} transactions using ${method}. ${data.pii_masked} PII fields masked. ${detectedInfo}`,
       });
 
       fetchUploadedFiles();

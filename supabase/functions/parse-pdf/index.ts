@@ -96,6 +96,63 @@ function categorizeTransaction(description: string): string {
   return "Other";
 }
 
+// Card detection patterns
+const CARD_PATTERNS: { pattern: RegExp; cardName: string; bankName: string }[] = [
+  // HDFC Cards
+  { pattern: /hdfc.*infinia/i, cardName: "Infinia", bankName: "HDFC" },
+  { pattern: /hdfc.*diners.*black/i, cardName: "Diners Club Black", bankName: "HDFC" },
+  { pattern: /hdfc.*regalia/i, cardName: "Regalia", bankName: "HDFC" },
+  { pattern: /hdfc.*moneyback/i, cardName: "MoneyBack", bankName: "HDFC" },
+  { pattern: /hdfc.*millennia/i, cardName: "Millennia", bankName: "HDFC" },
+  { pattern: /hdfc.*swiggy/i, cardName: "Swiggy", bankName: "HDFC" },
+  { pattern: /hdfc.*tata.*neu/i, cardName: "Tata Neu", bankName: "HDFC" },
+  // Axis Cards
+  { pattern: /axis.*atlas/i, cardName: "Atlas", bankName: "Axis" },
+  { pattern: /axis.*reserve/i, cardName: "Reserve", bankName: "Axis" },
+  { pattern: /axis.*magnus/i, cardName: "Magnus", bankName: "Axis" },
+  { pattern: /axis.*flipkart/i, cardName: "Flipkart", bankName: "Axis" },
+  { pattern: /axis.*ace/i, cardName: "Ace", bankName: "Axis" },
+  // ICICI Cards
+  { pattern: /icici.*emeralde/i, cardName: "Emeralde", bankName: "ICICI" },
+  { pattern: /icici.*sapphiro/i, cardName: "Sapphiro", bankName: "ICICI" },
+  { pattern: /icici.*amazon.*pay/i, cardName: "Amazon Pay", bankName: "ICICI" },
+  { pattern: /icici.*coral/i, cardName: "Coral", bankName: "ICICI" },
+  // SBI Cards
+  { pattern: /sbi.*elite/i, cardName: "Elite", bankName: "SBI" },
+  { pattern: /sbi.*prime/i, cardName: "Prime", bankName: "SBI" },
+  { pattern: /sbi.*simplysave/i, cardName: "SimplySave", bankName: "SBI" },
+  // Amex Cards
+  { pattern: /amex.*platinum/i, cardName: "Platinum", bankName: "Amex" },
+  { pattern: /american.*express.*platinum/i, cardName: "Platinum", bankName: "Amex" },
+  { pattern: /amex.*gold/i, cardName: "Gold", bankName: "Amex" },
+  { pattern: /amex.*mrcc/i, cardName: "MRCC", bankName: "Amex" },
+  // Generic bank detection
+  { pattern: /hdfc\s*(bank)?.*credit\s*card/i, cardName: "Generic", bankName: "HDFC" },
+  { pattern: /axis\s*(bank)?.*credit\s*card/i, cardName: "Generic", bankName: "Axis" },
+  { pattern: /icici\s*(bank)?.*credit\s*card/i, cardName: "Generic", bankName: "ICICI" },
+  { pattern: /sbi\s*(card)?.*credit\s*card/i, cardName: "Generic", bankName: "SBI" },
+  { pattern: /kotak.*credit\s*card/i, cardName: "Generic", bankName: "Kotak" },
+  { pattern: /yes\s*bank.*credit\s*card/i, cardName: "Generic", bankName: "Yes Bank" },
+  { pattern: /indusind.*credit\s*card/i, cardName: "Generic", bankName: "IndusInd" },
+];
+
+function detectCardType(text: string): { cardName: string; bankName: string; confidence: "high" | "medium" | "low" } {
+  const normalizedText = text.toLowerCase();
+  
+  for (const { pattern, cardName, bankName } of CARD_PATTERNS) {
+    if (pattern.test(normalizedText)) {
+      const isGeneric = cardName === "Generic";
+      return {
+        cardName: isGeneric ? `${bankName} Card` : cardName,
+        bankName,
+        confidence: isGeneric ? "medium" : "high",
+      };
+    }
+  }
+  
+  return { cardName: "Unknown", bankName: "Unknown", confidence: "low" };
+}
+
 function calculatePoints(amount: number, category: string, cardName: string): number {
   const rewardRates: Record<string, Record<string, number>> = {
     "Infinia": { "Travel": 5, "Dining": 3, "Shopping": 2, "Other": 1 },
@@ -103,6 +160,13 @@ function calculatePoints(amount: number, category: string, cardName: string): nu
     "Emeralde": { "Dining": 3, "Entertainment": 3, "Shopping": 2, "Other": 1 },
     "Diners Club Black": { "Travel": 5, "Dining": 5, "Shopping": 2, "Other": 1 },
     "Reserve": { "Travel": 5, "Dining": 3, "Entertainment": 3, "Other": 1 },
+    "MoneyBack": { "Shopping": 2, "Dining": 2, "Fuel": 1, "Other": 1 },
+    "Regalia": { "Travel": 4, "Dining": 4, "Shopping": 2, "Other": 1 },
+    "Millennia": { "Shopping": 2.5, "Dining": 2, "Other": 1 },
+    "Magnus": { "Travel": 5, "Dining": 4, "Shopping": 2, "Other": 1 },
+    "Flipkart": { "Shopping": 5, "Other": 1.5 },
+    "Amazon Pay": { "Shopping": 5, "Other": 2 },
+    "Elite": { "Travel": 3, "Dining": 3, "Shopping": 2, "Other": 1 },
     "default": { "Travel": 2, "Dining": 2, "Shopping": 1, "Other": 1 },
   };
 
@@ -143,14 +207,14 @@ function generateSummary(transactions: any[], cardName: string): any {
   };
 }
 
-// Extract transactions from PDF using Lovable AI vision model
-async function extractTransactionsWithAI(pdfBase64: string, cardName: string): Promise<any[]> {
+// Extract transactions using Lovable AI vision model
+async function extractTransactionsWithAI(pdfBase64: string, cardNameHint: string): Promise<{ transactions: any[]; statementText: string }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
     throw new Error("LOVABLE_API_KEY is not configured");
   }
 
-  const systemPrompt = `You are a credit card statement parser. Extract ALL transactions from this credit card statement image/PDF.
+  const systemPrompt = `You are a credit card statement parser. Extract ALL transactions and the statement header from this credit card statement.
 
 For each transaction, extract:
 - date: The transaction date in YYYY-MM-DD format
@@ -158,18 +222,24 @@ For each transaction, extract:
 - amount: The transaction amount as a positive number (without currency symbols)
 - merchant: The simplified merchant name (e.g., "Amazon", "Swiggy", "MakeMyTrip")
 
-Return ONLY valid JSON array with no markdown or explanations. Example format:
-[
-  {"date": "2024-01-15", "description": "AMAZON IN MUMBAI", "amount": 2500.00, "merchant": "Amazon"},
-  {"date": "2024-01-14", "description": "SWIGGY ORDER", "amount": 450.50, "merchant": "Swiggy"}
-]
+Also extract:
+- statementHeader: The first 500 characters of the statement including bank name, card type, customer details
 
-If you cannot extract transactions, return an empty array: []
+Return ONLY valid JSON with no markdown or explanations. Example format:
+{
+  "statementHeader": "HDFC BANK MoneyBack Credit Card Statement...",
+  "transactions": [
+    {"date": "2024-01-15", "description": "AMAZON IN MUMBAI", "amount": 2500.00, "merchant": "Amazon"},
+    {"date": "2024-01-14", "description": "SWIGGY ORDER", "amount": 450.50, "merchant": "Swiggy"}
+  ]
+}
+
+If you cannot extract transactions, return: {"statementHeader": "", "transactions": []}
 Parse ALL visible transactions. Include both credits and debits.`;
 
   console.log("Calling Lovable AI to extract transactions from PDF...");
 
-  const response = await fetch("https://api.lovable.dev/v1/chat/completions", {
+  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${LOVABLE_API_KEY}`,
@@ -184,7 +254,7 @@ Parse ALL visible transactions. Include both credits and debits.`;
           content: [
             {
               type: "text",
-              text: `Extract all transactions from this ${cardName} credit card statement. Return ONLY a JSON array.`
+              text: `Extract all transactions and statement header from this ${cardNameHint} credit card statement. Return ONLY valid JSON.`
             },
             {
               type: "image_url",
@@ -203,11 +273,17 @@ Parse ALL visible transactions. Include both credits and debits.`;
   if (!response.ok) {
     const errorText = await response.text();
     console.error("AI API error:", response.status, errorText);
+    if (response.status === 429) {
+      throw new Error("Rate limit exceeded. Please try again later.");
+    }
+    if (response.status === 402) {
+      throw new Error("AI credits exhausted. Please add credits to continue.");
+    }
     throw new Error(`AI extraction failed: ${response.status}`);
   }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || "[]";
+  const content = data.choices?.[0]?.message?.content || "{}";
   
   console.log("AI response received, parsing transactions...");
   
@@ -226,15 +302,20 @@ Parse ALL visible transactions. Include both credits and debits.`;
     }
     cleanContent = cleanContent.trim();
     
-    const transactions = JSON.parse(cleanContent);
-    if (!Array.isArray(transactions)) {
-      console.warn("AI did not return an array, returning empty");
-      return [];
+    const parsed = JSON.parse(cleanContent);
+    
+    // Handle both old array format and new object format
+    if (Array.isArray(parsed)) {
+      return { transactions: parsed, statementText: "" };
     }
-    return transactions;
+    
+    return {
+      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+      statementText: parsed.statementHeader || "",
+    };
   } catch (e) {
     console.error("Failed to parse AI response:", e, content);
-    return [];
+    return { transactions: [], statementText: "" };
   }
 }
 
@@ -284,8 +365,26 @@ serve(async (req) => {
     const pdfBase64 = btoa(binary);
 
     // Step 3: Extract transactions using Lovable AI vision
-    const rawTransactions = await extractTransactionsWithAI(pdfBase64, cardName);
+    const extractionResult = await extractTransactionsWithAI(pdfBase64, cardName);
+    const rawTransactions = extractionResult.transactions;
+    const statementText = extractionResult.statementText;
     console.log(`AI extracted ${rawTransactions.length} raw transactions`);
+
+    // Step 3b: Auto-detect card type from statement text
+    let detectedCard: { cardName: string; bankName: string; confidence: "high" | "medium" | "low" } = { 
+      cardName: cardName, 
+      bankName: "Unknown", 
+      confidence: "low" 
+    };
+    if (statementText) {
+      detectedCard = detectCardType(statementText);
+      console.log(`Detected card: ${detectedCard.bankName} ${detectedCard.cardName} (confidence: ${detectedCard.confidence})`);
+    }
+    
+    // Use detected card if user didn't specify or used default
+    const effectiveCardName = (cardName === "default" || !cardName) && detectedCard.confidence !== "low" 
+      ? detectedCard.cardName 
+      : cardName;
 
     // Step 4: Process and enrich transactions
     const transactions: any[] = [];
@@ -295,7 +394,7 @@ serve(async (req) => {
       
       const category = categorizeTransaction(tx.description || tx.merchant || "");
       const amount = Math.abs(parseFloat(tx.amount) || 0);
-      const pointsEarned = calculatePoints(amount, category, cardName);
+      const pointsEarned = calculatePoints(amount, category, effectiveCardName);
 
       transactions.push({
         user_id: userId,
@@ -341,8 +440,16 @@ serve(async (req) => {
       }
     }
 
-    // Step 7: Generate summary
-    const summary = generateSummary(transactions, cardName);
+    // Step 7: Generate summary with detected card info
+    const summary = {
+      ...generateSummary(transactions, effectiveCardName),
+      detected_card: {
+        card_name: detectedCard.cardName,
+        bank_name: detectedCard.bankName,
+        confidence: detectedCard.confidence,
+        auto_detected: cardName === "default" || !cardName,
+      },
+    };
 
     // Step 8: Update document with parsed data
     await supabase
@@ -353,8 +460,9 @@ serve(async (req) => {
     // Step 9: Create document chunks for RAG
     const chunkTexts: string[] = [];
     
-    // Create summary chunk
-    chunkTexts.push(`Credit Card Statement Summary for ${cardName}:
+    // Create summary chunk with detected card info
+    const cardDisplayName = `${detectedCard.bankName} ${detectedCard.cardName}`;
+    chunkTexts.push(`Credit Card Statement Summary for ${cardDisplayName}:
 Total Spend: ₹${summary.total_spend.toLocaleString()}
 Total Points Earned: ${summary.total_points_earned}
 Transaction Count: ${summary.transaction_count}
@@ -386,7 +494,8 @@ Top Categories: ${Object.entries(summary.spending_by_category)
       chunk_text: text,
       chunk_index: idx,
       metadata: {
-        card_name: cardName,
+        card_name: effectiveCardName,
+        bank_name: detectedCard.bankName,
         document_type: "statement",
         chunk_type: idx === 0 ? "summary" : "transactions",
       },
@@ -420,6 +529,12 @@ Top Categories: ${Object.entries(summary.spending_by_category)
         chunks_created: chunks.length,
         pii_masked: totalFieldsMasked,
         extraction_method: "ai_vision",
+        detected_card: {
+          card_name: detectedCard.cardName,
+          bank_name: detectedCard.bankName,
+          confidence: detectedCard.confidence,
+          used_for_rewards: effectiveCardName,
+        },
       }),
       {
         status: 200,
