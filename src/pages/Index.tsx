@@ -17,8 +17,6 @@ import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag
 // Mock data
 const cards = [
   { id: 1, bankName: "HDFC Bank", cardName: "Infinia", lastFour: "4582", points: 18000, value: 7200, variant: "emerald" as const },
-  { id: 2, bankName: "Axis Bank", cardName: "Atlas", lastFour: "7291", points: 12500, value: 3125, variant: "gold" as const },
-  { id: 3, bankName: "ICICI Bank", cardName: "Emeralde", lastFour: "3847", points: 3750, value: 1125, variant: "platinum" as const },
 ];
 
 const rewardRates = [
@@ -91,7 +89,7 @@ const Index = () => {
           <StatsCard
             title="Total Points"
             value={totalPoints.toLocaleString()}
-            subtitle="Across 3 cards"
+            subtitle="Across 1 card"
             icon={Coins}
             trend={{ value: "12%", positive: true }}
             variant="primary"
