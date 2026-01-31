@@ -14,6 +14,93 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_evaluations: {
+        Row: {
+          context_used: string[] | null
+          created_at: string
+          faithfulness_score: number | null
+          id: string
+          latency_ms: number | null
+          model_used: string | null
+          query: string
+          relevance_score: number | null
+          response: string
+          user_feedback: number | null
+          user_id: string | null
+        }
+        Insert: {
+          context_used?: string[] | null
+          created_at?: string
+          faithfulness_score?: number | null
+          id?: string
+          latency_ms?: number | null
+          model_used?: string | null
+          query: string
+          relevance_score?: number | null
+          response: string
+          user_feedback?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          context_used?: string[] | null
+          created_at?: string
+          faithfulness_score?: number | null
+          id?: string
+          latency_ms?: number | null
+          model_used?: string | null
+          query?: string
+          relevance_score?: number | null
+          response?: string
+          user_feedback?: number | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      card_benefits: {
+        Row: {
+          bank_name: string
+          benefit_category: string
+          benefit_description: string
+          benefit_title: string
+          card_name: string
+          conditions: string | null
+          embedding: string | null
+          id: string
+          is_active: boolean | null
+          last_updated: string
+          source_url: string | null
+          value_estimate: number | null
+        }
+        Insert: {
+          bank_name: string
+          benefit_category: string
+          benefit_description: string
+          benefit_title: string
+          card_name: string
+          conditions?: string | null
+          embedding?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_updated?: string
+          source_url?: string | null
+          value_estimate?: number | null
+        }
+        Update: {
+          bank_name?: string
+          benefit_category?: string
+          benefit_description?: string
+          benefit_title?: string
+          card_name?: string
+          conditions?: string | null
+          embedding?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_updated?: string
+          source_url?: string | null
+          value_estimate?: number | null
+        }
+        Relationships: []
+      }
       chat_messages: {
         Row: {
           content: string
@@ -35,6 +122,45 @@ export type Database = {
           id?: string
           role?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      compliance_logs: {
+        Row: {
+          action: string
+          created_at: string
+          id: string
+          ip_address: string | null
+          pii_accessed: boolean | null
+          pii_masked: boolean | null
+          resource_id: string | null
+          resource_type: string
+          user_agent: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          pii_accessed?: boolean | null
+          pii_masked?: boolean | null
+          resource_id?: string | null
+          resource_type: string
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          pii_accessed?: boolean | null
+          pii_masked?: boolean | null
+          resource_id?: string | null
+          resource_type?: string
+          user_agent?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -77,6 +203,47 @@ export type Database = {
         }
         Relationships: []
       }
+      document_chunks: {
+        Row: {
+          chunk_index: number
+          chunk_text: string
+          created_at: string
+          document_id: string | null
+          embedding: string | null
+          id: string
+          metadata: Json | null
+          user_id: string
+        }
+        Insert: {
+          chunk_index: number
+          chunk_text: string
+          created_at?: string
+          document_id?: string | null
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          user_id: string
+        }
+        Update: {
+          chunk_index?: number
+          chunk_text?: string
+          created_at?: string
+          document_id?: string | null
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_chunks_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "pdf_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pdf_documents: {
         Row: {
           created_at: string
@@ -110,6 +277,33 @@ export type Database = {
         }
         Relationships: []
       }
+      pii_masking_log: {
+        Row: {
+          created_at: string
+          fields_masked: number | null
+          id: string
+          pii_types_found: string[] | null
+          source_type: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          fields_masked?: number | null
+          id?: string
+          pii_types_found?: string[] | null
+          source_type: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          fields_masked?: number | null
+          id?: string
+          pii_types_found?: string[] | null
+          source_type?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -137,12 +331,235 @@ export type Database = {
         }
         Relationships: []
       }
+      query_cache: {
+        Row: {
+          created_at: string
+          expires_at: string
+          hit_count: number | null
+          id: string
+          model_used: string
+          query_embedding: string | null
+          query_hash: string
+          query_text: string
+          response: string
+          tokens_input: number | null
+          tokens_output: number | null
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string
+          hit_count?: number | null
+          id?: string
+          model_used: string
+          query_embedding?: string | null
+          query_hash: string
+          query_text: string
+          response: string
+          tokens_input?: number | null
+          tokens_output?: number | null
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          hit_count?: number | null
+          id?: string
+          model_used?: string
+          query_embedding?: string | null
+          query_hash?: string
+          query_text?: string
+          response?: string
+          tokens_input?: number | null
+          tokens_output?: number | null
+        }
+        Relationships: []
+      }
+      token_usage: {
+        Row: {
+          cache_hit: boolean | null
+          created_at: string
+          estimated_cost: number | null
+          id: string
+          model: string
+          query_type: string | null
+          tokens_input: number
+          tokens_output: number
+          user_id: string | null
+        }
+        Insert: {
+          cache_hit?: boolean | null
+          created_at?: string
+          estimated_cost?: number | null
+          id?: string
+          model: string
+          query_type?: string | null
+          tokens_input?: number
+          tokens_output?: number
+          user_id?: string | null
+        }
+        Update: {
+          cache_hit?: boolean | null
+          created_at?: string
+          estimated_cost?: number | null
+          id?: string
+          model?: string
+          query_type?: string | null
+          tokens_input?: number
+          tokens_output?: number
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      transactions: {
+        Row: {
+          amount: number
+          card_id: string | null
+          category: string | null
+          created_at: string
+          description: string
+          document_id: string | null
+          id: string
+          is_masked: boolean | null
+          merchant_name: string | null
+          points_earned: number | null
+          raw_data: Json | null
+          transaction_date: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          card_id?: string | null
+          category?: string | null
+          created_at?: string
+          description: string
+          document_id?: string | null
+          id?: string
+          is_masked?: boolean | null
+          merchant_name?: string | null
+          points_earned?: number | null
+          raw_data?: Json | null
+          transaction_date: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          card_id?: string | null
+          category?: string | null
+          created_at?: string
+          description?: string
+          document_id?: string | null
+          id?: string
+          is_masked?: boolean | null
+          merchant_name?: string | null
+          points_earned?: number | null
+          raw_data?: Json | null
+          transaction_date?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transactions_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "credit_cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "pdf_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_alerts: {
+        Row: {
+          action_url: string | null
+          alert_type: string
+          card_id: string | null
+          created_at: string
+          description: string | null
+          expires_at: string | null
+          id: string
+          is_read: boolean | null
+          priority: string | null
+          title: string
+          user_id: string
+        }
+        Insert: {
+          action_url?: string | null
+          alert_type: string
+          card_id?: string | null
+          created_at?: string
+          description?: string | null
+          expires_at?: string | null
+          id?: string
+          is_read?: boolean | null
+          priority?: string | null
+          title: string
+          user_id: string
+        }
+        Update: {
+          action_url?: string | null
+          alert_type?: string
+          card_id?: string | null
+          created_at?: string
+          description?: string | null
+          expires_at?: string | null
+          id?: string
+          is_read?: boolean | null
+          priority?: string | null
+          title?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_alerts_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "credit_cards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      find_similar_cache: {
+        Args: {
+          max_results?: number
+          query_emb: string
+          similarity_threshold?: number
+        }
+        Returns: {
+          id: string
+          query_text: string
+          response: string
+          similarity: number
+        }[]
+      }
+      search_benefits: {
+        Args: { match_count?: number; query_emb: string }
+        Returns: {
+          bank_name: string
+          benefit_description: string
+          benefit_title: string
+          card_name: string
+          id: string
+          similarity: number
+        }[]
+      }
+      search_documents: {
+        Args: { match_count?: number; query_emb: string; user_uuid: string }
+        Returns: {
+          chunk_text: string
+          id: string
+          metadata: Json
+          similarity: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
