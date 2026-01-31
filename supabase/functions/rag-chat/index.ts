@@ -264,7 +264,6 @@ serve(async (req) => {
 
     if (stream) {
       // For streaming, we need to collect the response for caching
-      const reader = response.body!.getReader();
       const decoder = new TextDecoder();
       let fullResponse = "";
       let tokensInput = 0;
@@ -272,8 +271,8 @@ serve(async (req) => {
 
       const transformStream = new TransformStream({
         async transform(chunk, controller) {
-          const text = decoder.decode(chunk, { stream: true });
           controller.enqueue(chunk);
+          const text = decoder.decode(chunk, { stream: true });
 
           // Parse chunks to collect response
           const lines = text.split("\n");
