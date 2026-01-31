@@ -168,41 +168,28 @@ export default function Upload() {
     setIsParsing(file.id);
 
     try {
-      // For demo, we'll simulate text extraction
-      // In production, you'd use a PDF parsing service or library
-      const sampleText = `
-        Statement Date: 15-01-2024
-        Card: ${selectedCard}
-        
-        15-01-2024  INR 2,500.00  Amazon India Shopping
-        14-01-2024  INR 1,200.00  Swiggy Food Order
-        13-01-2024  INR 45,000.00  MakeMyTrip Flight Booking
-        12-01-2024  INR 3,500.00  Zomato Restaurant
-        11-01-2024  INR 8,000.00  Flipkart Electronics
-        10-01-2024  INR 500.00  Netflix Subscription
-        09-01-2024  INR 2,000.00  Uber Rides
-        08-01-2024  INR 15,000.00  Hotel Booking Goibibo
-        07-01-2024  INR 1,800.00  Starbucks Cafe
-        06-01-2024  INR 950.00  BookMyShow Tickets
-        
-        Total Spend: 80,450.00
-        Reward Points Earned: 1,250
-      `;
+      toast({
+        title: "Parsing document...",
+        description: "AI is analyzing your credit card statement. This may take 10-30 seconds.",
+      });
 
+      // Call parse-pdf with file path for real PDF extraction
       const { data, error } = await supabase.functions.invoke("parse-pdf", {
         body: {
           documentId: file.id,
           userId: user.id,
-          rawText: sampleText,
+          filePath: file.file_path,
           cardName: selectedCard,
         },
       });
 
       if (error) throw error;
 
+      const method = data.extraction_method === "ai_vision" ? "AI Vision" : "Text Parser";
+      
       toast({
         title: "Document parsed successfully",
-        description: `Extracted ${data.transactions_parsed} transactions. ${data.pii_masked} PII fields were masked.`,
+        description: `Extracted ${data.transactions_parsed} transactions using ${method}. ${data.pii_masked} PII fields were masked.`,
       });
 
       fetchUploadedFiles();
@@ -211,7 +198,7 @@ export default function Upload() {
       toast({
         variant: "destructive",
         title: "Parsing failed",
-        description: "Failed to parse document. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to parse document. Please try again.",
       });
     } finally {
       setIsParsing(null);
