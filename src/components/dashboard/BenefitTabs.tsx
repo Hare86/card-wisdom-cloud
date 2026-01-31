@@ -1,5 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plane, Utensils, ShoppingBag, Gift, HelpCircle, CreditCard, Shield } from "lucide-react";
+import { Plane, Utensils, ShoppingBag, Gift, HelpCircle, CreditCard, Shield, ChevronDown, ChevronUp } from "lucide-react";
+import { useState } from "react";
 
 interface BenefitRate {
   category: string;
@@ -13,11 +14,18 @@ interface BenefitItem {
   icon: "lounge" | "cashback" | "milestone" | "insurance";
 }
 
+interface QAItem {
+  question: string;
+  answer: string;
+}
+
 interface BenefitTabsProps {
   cardName: string;
   rates: BenefitRate[];
   bestRedemption: string;
   benefits?: BenefitItem[];
+  rules?: string[];
+  qa?: QAItem[];
 }
 
 const benefitIcons = {
@@ -27,13 +35,26 @@ const benefitIcons = {
   insurance: <Shield className="w-5 h-5 text-info" />,
 };
 
-export function BenefitTabs({ cardName, rates, bestRedemption, benefits }: BenefitTabsProps) {
+export function BenefitTabs({ cardName, rates, bestRedemption, benefits, rules, qa }: BenefitTabsProps) {
+  const [expandedQA, setExpandedQA] = useState<number | null>(null);
+
   const defaultBenefits: BenefitItem[] = [
     { title: "Airport Lounge Access", description: "Unlimited domestic + 6 international/year", icon: "lounge" },
     { title: "Milestone Benefits", description: "Bonus points on annual spend targets", icon: "milestone" },
   ];
 
+  const defaultRules: string[] = [
+    "Points validity varies by issuer",
+    "Check your statement for specific terms",
+  ];
+
+  const defaultQA: QAItem[] = [
+    { question: "How do I redeem points?", answer: "Visit your card issuer's rewards portal for redemption options." },
+  ];
+
   const displayBenefits = benefits || defaultBenefits;
+  const displayRules = rules || defaultRules;
+  const displayQA = qa || defaultQA;
   return (
     <div className="glass-card rounded-xl p-6">
       <h3 className="text-lg font-semibold mb-4">{cardName} Benefits</h3>
@@ -132,20 +153,42 @@ export function BenefitTabs({ cardName, rates, bestRedemption, benefits }: Benef
         </TabsContent>
 
         <TabsContent value="rules" className="mt-4">
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <p>• Points expire 3 years from earn date</p>
-            <p>• Minimum redemption: 500 points</p>
-            <p>• No capping on reward points earning</p>
-            <p>• Points not earned on fuel, rent, utilities</p>
+          <div className="space-y-3">
+            {displayRules.map((rule, index) => (
+              <div key={index} className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
+                <span className="text-primary font-bold text-sm">•</span>
+                <p className="text-sm text-muted-foreground">{rule}</p>
+              </div>
+            ))}
           </div>
         </TabsContent>
 
         <TabsContent value="qa" className="mt-4">
-          <div className="flex items-center gap-3 p-4 bg-muted/30 rounded-lg">
-            <HelpCircle className="w-5 h-5 text-info" />
-            <p className="text-sm text-muted-foreground">
-              Ask the AI assistant about this card's benefits
-            </p>
+          <div className="space-y-3">
+            {displayQA.map((item, index) => (
+              <div 
+                key={index} 
+                className="bg-muted/30 rounded-lg overflow-hidden cursor-pointer hover:bg-muted/50 transition-colors"
+                onClick={() => setExpandedQA(expandedQA === index ? null : index)}
+              >
+                <div className="flex items-center justify-between p-4">
+                  <div className="flex items-center gap-3">
+                    <HelpCircle className="w-4 h-4 text-info flex-shrink-0" />
+                    <p className="text-sm font-medium">{item.question}</p>
+                  </div>
+                  {expandedQA === index ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </div>
+                {expandedQA === index && (
+                  <div className="px-4 pb-4 pt-0">
+                    <p className="text-sm text-muted-foreground pl-7">{item.answer}</p>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </TabsContent>
       </Tabs>

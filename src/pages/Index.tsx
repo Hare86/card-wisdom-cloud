@@ -35,11 +35,13 @@ interface CardData {
   variant: CardVariant;
 }
 
-// Card-specific reward rates and benefits
+// Card-specific reward rates, benefits, rules, and Q&A
 const cardBenefitsData: Record<string, {
   rates: { category: string; multiplier: string; icon: React.ReactNode }[];
   bestRedemption: string;
   benefits: { title: string; description: string; icon: "lounge" | "cashback" | "milestone" | "insurance" }[];
+  rules: string[];
+  qa: { question: string; answer: string }[];
 }> = {
   "HDFC": {
     rates: [
@@ -52,6 +54,18 @@ const cardBenefitsData: Record<string, {
     benefits: [
       { title: "Airport Lounge Access", description: "Unlimited domestic + 6 international/year", icon: "lounge" },
       { title: "Milestone Benefits", description: "Bonus 2,500 points on ₹8L annual spend", icon: "milestone" },
+    ],
+    rules: [
+      "Points expire 3 years from earn date",
+      "Minimum redemption: 2,500 points",
+      "No capping on reward points earning",
+      "Points not earned on fuel, rent, utilities, insurance",
+      "10x points on SmartBuy portal purchases",
+    ],
+    qa: [
+      { question: "How do I transfer points to airlines?", answer: "Go to HDFC SmartBuy portal → Rewards → Transfer to Partners. KrisFlyer, Club Vistara available." },
+      { question: "What's the best value redemption?", answer: "Transfer to Singapore KrisFlyer for business class awards - get 1.8x value compared to cashback." },
+      { question: "Do points expire?", answer: "Yes, 3 years from the date of earning. Check your statement for exact expiry dates." },
     ],
   },
   "MoneyBack": {
@@ -66,6 +80,18 @@ const cardBenefitsData: Record<string, {
       { title: "Cashback Rewards", description: "Direct statement credit, no conversion hassle", icon: "cashback" },
       { title: "Fuel Surcharge Waiver", description: "1% waiver on fuel transactions (up to ₹250/month)", icon: "insurance" },
     ],
+    rules: [
+      "Cashback credited within 90 days of transaction",
+      "Minimum cashback redemption: ₹500",
+      "Maximum monthly cashback: ₹3,000",
+      "Fuel surcharge waiver up to ₹250/month",
+      "Not applicable on wallet loads, EMI transactions",
+    ],
+    qa: [
+      { question: "When do I get my cashback?", answer: "Cashback is auto-credited to your statement within 90 days of the qualifying transaction." },
+      { question: "Is there a cap on earnings?", answer: "Yes, maximum ₹3,000 cashback per month across all categories." },
+      { question: "How does fuel surcharge waiver work?", answer: "1% surcharge waived automatically on fuel purchases between ₹400-₹5,000 (max ₹250/month)." },
+    ],
   },
   "Amex": {
     rates: [
@@ -79,6 +105,18 @@ const cardBenefitsData: Record<string, {
       { title: "Premium Lounge Access", description: "Priority Pass + Amex lounges worldwide", icon: "lounge" },
       { title: "Travel Insurance", description: "Complimentary travel insurance up to ₹50L", icon: "insurance" },
     ],
+    rules: [
+      "Points never expire as long as account is active",
+      "Minimum redemption: 1,000 points",
+      "Transfer ratio varies by partner (1:1 to 1:2)",
+      "18,000 points for Taj voucher worth ₹10,000",
+      "Annual fee waived on ₹4L annual spend",
+    ],
+    qa: [
+      { question: "Do Amex points expire?", answer: "No! Amex Membership Rewards points never expire as long as your card account remains open and in good standing." },
+      { question: "Best hotel transfer partner?", answer: "Marriott Bonvoy at 1:1 ratio. Book 5 nights, get 5th night free on award stays." },
+      { question: "How to use Priority Pass?", answer: "Download Priority Pass app, register with your card number, and show the digital card at participating lounges." },
+    ],
   },
 };
 
@@ -90,6 +128,15 @@ const defaultCardBenefits = {
   bestRedemption: "Redeem points for statement credit or gift vouchers",
   benefits: [
     { title: "Standard Rewards", description: "Earn points on all purchases", icon: "milestone" as const },
+  ],
+  rules: [
+    "Points validity varies by issuer",
+    "Check your statement for specific terms",
+    "Standard reward rate applies to all purchases",
+  ],
+  qa: [
+    { question: "How do I redeem points?", answer: "Visit your card issuer's rewards portal or call customer service to explore redemption options." },
+    { question: "Do my points expire?", answer: "Check your monthly statement or contact your bank for expiry details specific to your card." },
   ],
 };
 
@@ -299,6 +346,8 @@ const Index = () => {
                   rates={cardBenefits.rates}
                   bestRedemption={cardBenefits.bestRedemption}
                   benefits={cardBenefits.benefits}
+                  rules={cardBenefits.rules}
+                  qa={cardBenefits.qa}
                 />
               );
             })()}
