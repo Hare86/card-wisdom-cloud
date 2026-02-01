@@ -1,149 +1,29 @@
+/**
+ * RAG Chat Edge Function - Semantic Search Enhanced
+ * 
+ * Features:
+ * - Vector embeddings for semantic cache lookup (92% similarity threshold)
+ * - Multi-source context retrieval (documents, benefits, transactions)
+ * - Dynamic model routing based on task complexity
+ * - RAGAS-style evaluation metrics
+ * - Streaming support with follow-up question generation
+ */
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+import { MODEL_COSTS, SYSTEM_PROMPTS } from "./types.ts";
+import type { RagRequest, ChatMessage } from "./types.ts";
+import { checkSemanticCache, storeInCache } from "./semantic-cache.ts";
+import { retrieveContext, buildContextSection } from "./retrieval.ts";
+import { selectModel, calculateCost } from "./model-router.ts";
+import { generateFollowUpQuestions } from "./follow-up.ts";
+import { calculateMetrics, logTokenUsage, logEvaluation } from "./metrics.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-// Token costs per 1M tokens (approximate)
-const MODEL_COSTS: Record<string, { input: number; output: number }> = {
-  "google/gemini-3-flash-preview": { input: 0.10, output: 0.40 },
-  "google/gemini-2.5-flash": { input: 0.075, output: 0.30 },
-  "google/gemini-2.5-pro": { input: 1.25, output: 5.00 },
-  "openai/gpt-5": { input: 5.00, output: 15.00 },
-  "openai/gpt-5-mini": { input: 0.15, output: 0.60 },
-};
-
-// Model selection based on task complexity
-function selectModel(taskType: string, contextLength: number): string {
-  // Complex reasoning tasks
-  if (taskType === "analysis" || taskType === "recommendation") {
-    return contextLength > 10000 ? "google/gemini-2.5-pro" : "google/gemini-3-flash-preview";
-  }
-  
-  // Simple Q&A or chat
-  if (taskType === "chat" || taskType === "simple") {
-    return "google/gemini-2.5-flash";
-  }
-  
-  // Parsing and extraction (needs precision)
-  if (taskType === "parsing" || taskType === "extraction") {
-    return "google/gemini-3-flash-preview";
-  }
-  
-  return "google/gemini-3-flash-preview";
-}
-
-// Generate cache key hash
-async function generateCacheKey(query: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(query.toLowerCase().trim());
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-// Calculate RAGAS-style metrics
-function calculateMetrics(
-  query: string,
-  response: string,
-  context: string[]
-): { faithfulness: number; relevance: number } {
-  // Simplified metric calculation
-  // In production, this would use a separate LLM call for evaluation
-  
-  // Faithfulness: How much of the response is grounded in context
-  const contextWords = new Set(context.join(" ").toLowerCase().split(/\s+/));
-  const responseWords = response.toLowerCase().split(/\s+/);
-  const groundedWords = responseWords.filter((w) => contextWords.has(w));
-  const faithfulness = Math.min(1, groundedWords.length / Math.max(responseWords.length * 0.3, 1));
-
-  // Relevance: How well does the response address the query
-  const queryWords = new Set(query.toLowerCase().split(/\s+/));
-  const relevantWords = responseWords.filter((w) => queryWords.has(w));
-  const relevance = Math.min(1, (relevantWords.length * 2) / Math.max(queryWords.size, 1));
-
-  return {
-    faithfulness: Math.round(faithfulness * 100) / 100,
-    relevance: Math.round(relevance * 100) / 100,
-  };
-}
-
-// System prompts for different task types
-const SYSTEM_PROMPTS: Record<string, string> = {
-  chat: `You are an expert Credit Card Reward Intelligence Assistant. You help users:
-- Understand their credit card benefits, reward rates, and earning categories
-- Track points across multiple cards
-- Find the best redemption options (airline transfers, hotel bookings, cashback)
-- Alert them about expiring points and milestone achievements
-Keep responses concise and actionable. Use bullet points for clarity.`,
-
-  analysis: `You are a financial analyst specializing in credit card rewards optimization.
-Analyze the provided data and give detailed insights on:
-- Spending patterns and category distribution
-- Reward earning efficiency
-- Opportunities for optimization
-- Comparative analysis with other cards
-Provide data-driven recommendations with specific numbers.`,
-
-  recommendation: `You are a rewards optimization expert. Based on the context provided:
-- Identify the highest-value redemption opportunities
-- Calculate point values for different redemption options
-- Recommend specific actions with estimated savings
-- Consider transfer partners, sweet spots, and promotions
-Always include specific numbers and percentages.`,
-};
-
-// Generate follow-up questions based on context
-async function generateFollowUpQuestions(
-  query: string,
-  response: string,
-  context: string[],
-  apiKey: string
-): Promise<string[]> {
-  try {
-    const prompt = `Based on this conversation about credit card rewards, generate 4-6 relevant follow-up questions the user might want to ask next.
-
-User asked: "${query}"
-
-Assistant responded: "${response.substring(0, 500)}..."
-
-Context topics: ${context.slice(0, 3).join(", ")}
-
-Generate short, actionable questions (max 8 words each). Return ONLY a JSON array of strings, nothing else.
-Example: ["How do I redeem for flights?", "What's my best card for dining?"]`;
-
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 200,
-      }),
-    });
-
-    if (!res.ok) return [];
-
-    const data = await res.json();
-    const content = data.choices?.[0]?.message?.content || "[]";
-    
-    // Parse JSON from response
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      const questions = JSON.parse(jsonMatch[0]);
-      return questions.slice(0, 6);
-    }
-    return [];
-  } catch (error) {
-    console.error("Error generating follow-up questions:", error);
-    return [];
-  }
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -163,45 +43,34 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { 
-      messages, 
-      userId, 
+    const {
+      messages,
+      userId,
       taskType = "chat",
       includeContext = true,
-      stream = true 
-    } = await req.json();
+      stream = true,
+    }: RagRequest = await req.json();
 
     const lastMessage = messages[messages.length - 1]?.content || "";
     console.log(`Processing ${taskType} query: ${lastMessage.substring(0, 50)}...`);
 
-    // Step 1: Check semantic cache
-    const cacheKey = await generateCacheKey(lastMessage);
-    const { data: cachedResponse } = await supabase
-      .from("query_cache")
-      .select("*")
-      .eq("query_hash", cacheKey)
-      .gt("expires_at", new Date().toISOString())
-      .single();
+    // Step 1: Check semantic cache (hybrid exact + vector search)
+    const cachedResponse = await checkSemanticCache(supabase, lastMessage, LOVABLE_API_KEY);
 
     if (cachedResponse) {
-      console.log("Cache hit! Returning cached response");
-      
-      // Update hit count
-      await supabase
-        .from("query_cache")
-        .update({ hit_count: cachedResponse.hit_count + 1 })
-        .eq("id", cachedResponse.id);
+      console.log(`Cache hit! Similarity: ${((cachedResponse.similarity || 1) * 100).toFixed(1)}%`);
 
-      // Log token usage (cache hit)
-      await supabase.from("token_usage").insert({
-        user_id: userId,
-        model: cachedResponse.model_used,
-        tokens_input: 0,
-        tokens_output: 0,
-        estimated_cost: 0,
-        query_type: taskType,
-        cache_hit: true,
-      });
+      // Log cache hit (zero token cost)
+      await logTokenUsage(
+        supabase,
+        userId,
+        cachedResponse.model_used,
+        0,
+        0,
+        0,
+        taskType,
+        true
+      );
 
       // Generate follow-up questions for cached response
       const followUpQuestions = await generateFollowUpQuestions(
@@ -211,11 +80,12 @@ serve(async (req) => {
         LOVABLE_API_KEY
       );
 
-      // Return cached response (non-streaming for cache hits)
       return new Response(
-        JSON.stringify({ 
-          content: cachedResponse.response, 
+        JSON.stringify({
+          content: cachedResponse.response,
           cached: true,
+          semanticMatch: (cachedResponse.similarity || 1) < 1,
+          similarity: cachedResponse.similarity,
           model: cachedResponse.model_used,
           followUpQuestions,
         }),
@@ -226,66 +96,30 @@ serve(async (req) => {
       );
     }
 
-    // Step 2: Retrieve relevant context (RAG)
-    let contextChunks: string[] = [];
-    let benefitsContext: string[] = [];
+    // Step 2: Retrieve relevant context using semantic search
+    let contextSection = "";
+    let allContext: string[] = [];
 
     if (includeContext && userId) {
-      // Get user's document chunks
-      const { data: userDocs } = await supabase
-        .from("document_chunks")
-        .select("chunk_text, metadata")
-        .eq("user_id", userId)
-        .limit(10);
-
-      if (userDocs) {
-        contextChunks = userDocs.map((d) => d.chunk_text);
-      }
-
-      // Get relevant card benefits
-      const { data: benefits } = await supabase
-        .from("card_benefits")
-        .select("bank_name, card_name, benefit_title, benefit_description")
-        .eq("is_active", true)
-        .limit(10);
-
-      if (benefits) {
-        benefitsContext = benefits.map(
-          (b) => `${b.bank_name} ${b.card_name}: ${b.benefit_title} - ${b.benefit_description}`
-        );
-      }
-
-      // Get user's transaction summary
-      const { data: transactions } = await supabase
-        .from("transactions")
-        .select("category, amount, points_earned")
-        .eq("user_id", userId)
-        .limit(100);
-
-      if (transactions && transactions.length > 0) {
-        const summary = transactions.reduce((acc, t) => {
-          acc[t.category] = acc[t.category] || { amount: 0, points: 0 };
-          acc[t.category].amount += Math.abs(t.amount);
-          acc[t.category].points += t.points_earned;
-          return acc;
-        }, {} as Record<string, { amount: number; points: number }>);
-
-        contextChunks.push(`User spending summary: ${JSON.stringify(summary)}`);
-      }
+      const context = await retrieveContext(supabase, lastMessage, userId, LOVABLE_API_KEY);
+      contextSection = buildContextSection(context);
+      allContext = [
+        ...context.documentChunks,
+        ...context.benefitsContext,
+        ...(context.transactionSummary ? [context.transactionSummary] : []),
+      ];
     }
 
     // Step 3: Select appropriate model
-    const totalContextLength = contextChunks.join("").length + benefitsContext.join("").length;
-    const selectedModel = selectModel(taskType, totalContextLength);
-    console.log(`Selected model: ${selectedModel}`);
+    const { model: selectedModel, reason } = selectModel(
+      taskType as any,
+      contextSection.length
+    );
+    console.log(`Selected model: ${selectedModel} (${reason})`);
 
     // Step 4: Build prompt with context
     const systemPrompt = SYSTEM_PROMPTS[taskType] || SYSTEM_PROMPTS.chat;
-    const contextSection = [...contextChunks, ...benefitsContext].length > 0
-      ? `\n\nRELEVANT CONTEXT:\n${[...contextChunks, ...benefitsContext].join("\n\n")}`
-      : "";
-
-    const enhancedMessages = [
+    const enhancedMessages: ChatMessage[] = [
       { role: "system", content: systemPrompt + contextSection },
       ...messages,
     ];
@@ -322,7 +156,7 @@ serve(async (req) => {
     }
 
     if (stream) {
-      // For streaming, we need to collect the response for caching
+      // Streaming response handling
       const decoder = new TextDecoder();
       let fullResponse = "";
       let tokensInput = 0;
@@ -341,8 +175,7 @@ serve(async (req) => {
                 const data = JSON.parse(line.slice(6));
                 const content = data.choices?.[0]?.delta?.content;
                 if (content) fullResponse += content;
-                
-                // Try to get usage info
+
                 if (data.usage) {
                   tokensInput = data.usage.prompt_tokens || 0;
                   tokensOutput = data.usage.completion_tokens || 0;
@@ -354,46 +187,45 @@ serve(async (req) => {
           }
         },
         async flush() {
-          // Cache the response after streaming completes
+          // Post-stream processing
           const latency = Date.now() - startTime;
-          const costs = MODEL_COSTS[selectedModel] || MODEL_COSTS["google/gemini-3-flash-preview"];
-          const estimatedCost = (tokensInput * costs.input + tokensOutput * costs.output) / 1_000_000;
+          const estimatedCost = calculateCost(selectedModel, tokensInput, tokensOutput, MODEL_COSTS);
+          const metrics = calculateMetrics(lastMessage, fullResponse, allContext);
 
-          // Calculate metrics
-          const metrics = calculateMetrics(lastMessage, fullResponse, [...contextChunks, ...benefitsContext]);
-
-          // Store in cache
-          await supabase.from("query_cache").insert({
-            query_hash: cacheKey,
-            query_text: lastMessage,
-            response: fullResponse,
-            model_used: selectedModel,
-            tokens_input: tokensInput,
-            tokens_output: tokensOutput,
-          });
+          // Store in semantic cache with embedding
+          await storeInCache(
+            supabase,
+            lastMessage,
+            fullResponse,
+            selectedModel,
+            tokensInput,
+            tokensOutput,
+            LOVABLE_API_KEY
+          );
 
           // Log token usage
-          await supabase.from("token_usage").insert({
-            user_id: userId,
-            model: selectedModel,
-            tokens_input: tokensInput,
-            tokens_output: tokensOutput,
-            estimated_cost: estimatedCost,
-            query_type: taskType,
-            cache_hit: false,
-          });
+          await logTokenUsage(
+            supabase,
+            userId,
+            selectedModel,
+            tokensInput,
+            tokensOutput,
+            estimatedCost,
+            taskType,
+            false
+          );
 
           // Log evaluation
-          await supabase.from("ai_evaluations").insert({
-            user_id: userId,
-            query: lastMessage,
-            response: fullResponse,
-            context_used: [...contextChunks, ...benefitsContext].slice(0, 5),
-            faithfulness_score: metrics.faithfulness,
-            relevance_score: metrics.relevance,
-            model_used: selectedModel,
-            latency_ms: latency,
-          });
+          await logEvaluation(
+            supabase,
+            userId,
+            lastMessage,
+            fullResponse,
+            allContext,
+            metrics,
+            selectedModel,
+            latency
+          );
 
           console.log(`Response completed: ${tokensOutput} tokens, ${latency}ms, cost: $${estimatedCost.toFixed(6)}`);
         },
@@ -403,13 +235,13 @@ serve(async (req) => {
       const followUpQuestions = await generateFollowUpQuestions(
         lastMessage,
         "",
-        [...contextChunks, ...benefitsContext],
+        allContext,
         LOVABLE_API_KEY
       );
 
       const transformedStream = response.body!.pipeThrough(transformStream);
 
-      // For streaming, we append follow-up questions as a final SSE event
+      // Append follow-up questions as final SSE event
       const questionEvent = `\n\ndata: ${JSON.stringify({ followUpQuestions })}\n\n`;
       const questionBytes = new TextEncoder().encode(questionEvent);
 
@@ -422,7 +254,6 @@ serve(async (req) => {
               if (done) break;
               controller.enqueue(value);
             }
-            // Append follow-up questions at the end
             controller.enqueue(questionBytes);
             controller.close();
           } catch (e) {
@@ -442,42 +273,63 @@ serve(async (req) => {
       const tokensOutput = data.usage?.completion_tokens || 0;
       const latency = Date.now() - startTime;
 
-      const costs = MODEL_COSTS[selectedModel] || MODEL_COSTS["google/gemini-3-flash-preview"];
-      const estimatedCost = (tokensInput * costs.input + tokensOutput * costs.output) / 1_000_000;
+      const estimatedCost = calculateCost(selectedModel, tokensInput, tokensOutput, MODEL_COSTS);
+      const metrics = calculateMetrics(lastMessage, content, allContext);
 
-      // Cache response
-      await supabase.from("query_cache").insert({
-        query_hash: cacheKey,
-        query_text: lastMessage,
-        response: content,
-        model_used: selectedModel,
-        tokens_input: tokensInput,
-        tokens_output: tokensOutput,
-      });
+      // Store in semantic cache with embedding
+      await storeInCache(
+        supabase,
+        lastMessage,
+        content,
+        selectedModel,
+        tokensInput,
+        tokensOutput,
+        LOVABLE_API_KEY
+      );
 
-      // Log usage
-      await supabase.from("token_usage").insert({
-        user_id: userId,
-        model: selectedModel,
-        tokens_input: tokensInput,
-        tokens_output: tokensOutput,
-        estimated_cost: estimatedCost,
-        query_type: taskType,
-        cache_hit: false,
-      });
+      // Log usage and evaluation
+      await logTokenUsage(
+        supabase,
+        userId,
+        selectedModel,
+        tokensInput,
+        tokensOutput,
+        estimatedCost,
+        taskType,
+        false
+      );
+
+      await logEvaluation(
+        supabase,
+        userId,
+        lastMessage,
+        content,
+        allContext,
+        metrics,
+        selectedModel,
+        latency
+      );
 
       // Generate follow-up questions
       const followUpQuestions = await generateFollowUpQuestions(
         lastMessage,
         content,
-        [...contextChunks, ...benefitsContext],
+        allContext,
         LOVABLE_API_KEY
       );
 
-      return new Response(JSON.stringify({ content, model: selectedModel, cached: false, followUpQuestions }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          content,
+          model: selectedModel,
+          cached: false,
+          followUpQuestions,
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
   } catch (error) {
     console.error("RAG chat error:", error);
