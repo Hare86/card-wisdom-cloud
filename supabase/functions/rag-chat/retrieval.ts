@@ -33,21 +33,28 @@ export async function retrieveContext(
     const { embedding } = await generateEmbedding(query, apiKey);
     const vectorString = embeddingToVector(embedding);
 
-    // Run all retrievals in parallel for efficiency
-    const [docResults, benefitsResults, transactionResults] = await Promise.all([
-      // Semantic search on user's document chunks
-      searchDocuments(supabase, vectorString, userId),
-      // Semantic search on card benefits knowledge base
-      searchBenefits(supabase, vectorString),
-      // Get aggregated transaction data
-      getTransactionSummary(supabase, userId),
-    ]);
+    // Check if embeddings are available
+    if (vectorString) {
+      // Run semantic search in parallel for efficiency
+      const [docResults, benefitsResults, transactionResults] = await Promise.all([
+        // Semantic search on user's document chunks
+        searchDocuments(supabase, vectorString, userId),
+        // Semantic search on card benefits knowledge base
+        searchBenefits(supabase, vectorString),
+        // Get aggregated transaction data
+        getTransactionSummary(supabase, userId),
+      ]);
 
-    result.documentChunks = docResults;
-    result.benefitsContext = benefitsResults;
-    result.transactionSummary = transactionResults;
+      result.documentChunks = docResults;
+      result.benefitsContext = benefitsResults;
+      result.transactionSummary = transactionResults;
 
-    console.log(`Retrieved context: ${docResults.length} docs, ${benefitsResults.length} benefits`);
+      console.log(`Retrieved context: ${docResults.length} docs, ${benefitsResults.length} benefits`);
+    } else {
+      // Embeddings not available, use fallback retrieval
+      console.log("Embeddings not available, using text-based retrieval");
+      return await fallbackRetrieval(supabase, userId);
+    }
   } catch (error) {
     console.error("Context retrieval error:", error);
     // Fall back to non-semantic retrieval
