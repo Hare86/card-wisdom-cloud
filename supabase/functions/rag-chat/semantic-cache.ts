@@ -128,20 +128,14 @@ export async function storeInCache(
 }
 
 /**
- * Update hit count for a cache entry using raw SQL increment
+ * Update hit count for a cache entry using dedicated function
  */
 async function updateCacheHitCount(
   supabase: SupabaseClient,
   cacheId: string
 ): Promise<void> {
-  // Use raw update with increment - hit_count + 1
-  const { error } = await supabase
-    .from("query_cache")
-    .update({ hit_count: 1 }) // Will be incremented via SQL
-    .eq("id", cacheId);
+  const { error } = await supabase.rpc("increment_cache_hit", { cache_id: cacheId });
   
-  // Alternatively, we can use a direct SQL increment via RPC
-  // For now, just ensure the record is touched
   if (error) {
     console.error("Failed to update cache hit count:", error);
   }
