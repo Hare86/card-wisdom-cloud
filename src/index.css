@@ -2,104 +2,116 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Credit Card Reward Intelligence Dashboard - Premium Fintech Design System */
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+/* CardWise - Professional Enterprise Dashboard Design System */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @layer base {
   :root {
-    /* Deep Navy + Gold + Emerald palette for trust & wealth */
-    --background: 222 47% 6%;
-    --foreground: 210 40% 98%;
+    /* Professional Dark Theme - Inspired by Azure, Banking Dashboards */
+    --background: 220 20% 10%;
+    --foreground: 210 20% 98%;
 
-    --card: 222 47% 8%;
-    --card-foreground: 210 40% 98%;
+    --card: 220 20% 13%;
+    --card-foreground: 210 20% 98%;
 
-    --popover: 222 47% 10%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 220 20% 15%;
+    --popover-foreground: 210 20% 98%;
 
-    /* Emerald primary */
-    --primary: 160 84% 39%;
-    --primary-foreground: 222 47% 6%;
+    /* Professional Blue Primary - Enterprise Standard */
+    --primary: 213 94% 56%;
+    --primary-foreground: 0 0% 100%;
 
-    /* Warm gold secondary */
-    --secondary: 43 96% 56%;
-    --secondary-foreground: 222 47% 6%;
+    /* Subtle Secondary - Muted for balance */
+    --secondary: 220 16% 22%;
+    --secondary-foreground: 210 20% 90%;
 
-    --muted: 222 40% 14%;
-    --muted-foreground: 215 20% 55%;
+    --muted: 220 16% 18%;
+    --muted-foreground: 215 15% 55%;
 
-    --accent: 160 60% 25%;
-    --accent-foreground: 160 84% 70%;
+    --accent: 213 70% 20%;
+    --accent-foreground: 213 94% 70%;
 
     --destructive: 0 72% 51%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 222 40% 16%;
-    --input: 222 40% 16%;
-    --ring: 160 84% 39%;
+    --border: 220 16% 20%;
+    --input: 220 16% 20%;
+    --ring: 213 94% 56%;
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;
 
     /* Custom tokens for dashboard */
-    --success: 160 84% 39%;
-    --success-foreground: 160 84% 85%;
-    --warning: 43 96% 56%;
-    --warning-foreground: 43 96% 20%;
+    --success: 142 71% 45%;
+    --success-foreground: 142 71% 90%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 38 92% 15%;
     --info: 199 89% 48%;
     --info-foreground: 199 89% 90%;
 
-    /* Gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(160 84% 39%) 0%, hsl(172 66% 45%) 100%);
-    --gradient-gold: linear-gradient(135deg, hsl(43 96% 56%) 0%, hsl(38 92% 50%) 100%);
-    --gradient-card: linear-gradient(145deg, hsl(222 47% 10%) 0%, hsl(222 47% 7%) 100%);
-    --gradient-glass: linear-gradient(135deg, hsla(160 84% 39% / 0.1) 0%, hsla(160 84% 39% / 0.05) 100%);
-    --gradient-hero: linear-gradient(180deg, hsl(222 47% 8%) 0%, hsl(222 47% 5%) 100%);
+    /* Subtle gradients for depth */
+    --gradient-primary: linear-gradient(135deg, hsl(213 94% 56%) 0%, hsl(213 94% 45%) 100%);
+    --gradient-card: linear-gradient(180deg, hsl(220 20% 14%) 0%, hsl(220 20% 12%) 100%);
+    --gradient-glass: linear-gradient(135deg, hsla(213 94% 56% / 0.08) 0%, hsla(213 94% 56% / 0.02) 100%);
+    --gradient-hero: linear-gradient(180deg, hsl(220 20% 12%) 0%, hsl(220 20% 8%) 100%);
+    --gradient-gold: linear-gradient(135deg, hsl(38 92% 50%) 0%, hsl(32 90% 45%) 100%);
 
-    /* Shadows */
-    --shadow-glow: 0 0 40px -10px hsl(160 84% 39% / 0.3);
-    --shadow-card: 0 4px 24px -4px hsl(0 0% 0% / 0.3);
-    --shadow-gold: 0 0 30px -10px hsl(43 96% 56% / 0.3);
+    /* Professional shadows */
+    --shadow-glow: 0 0 30px -10px hsl(213 94% 56% / 0.25);
+    --shadow-card: 0 1px 3px hsl(0 0% 0% / 0.12), 0 1px 2px hsl(0 0% 0% / 0.24);
+    --shadow-gold: 0 0 20px -8px hsl(38 92% 50% / 0.3);
 
     /* Sidebar */
-    --sidebar-background: 222 47% 7%;
-    --sidebar-foreground: 210 40% 90%;
-    --sidebar-primary: 160 84% 39%;
-    --sidebar-primary-foreground: 222 47% 6%;
-    --sidebar-accent: 222 40% 12%;
-    --sidebar-accent-foreground: 160 84% 70%;
-    --sidebar-border: 222 40% 14%;
-    --sidebar-ring: 160 84% 39%;
+    --sidebar-background: 220 20% 8%;
+    --sidebar-foreground: 210 20% 85%;
+    --sidebar-primary: 213 94% 56%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 16% 16%;
+    --sidebar-accent-foreground: 213 94% 70%;
+    --sidebar-border: 220 16% 18%;
+    --sidebar-ring: 213 94% 56%;
   }
 
-  /* Light mode alternative */
+  /* Light mode - Clean & Professional */
   .light {
-    --background: 0 0% 98%;
-    --foreground: 222 47% 11%;
+    --background: 210 20% 98%;
+    --foreground: 220 20% 14%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 220 20% 14%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 160 84% 35%;
+    --popover-foreground: 220 20% 14%;
+    --primary: 213 94% 48%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 43 80% 50%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 222 40% 40%;
-    --accent: 160 40% 92%;
-    --accent-foreground: 160 84% 30%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 20% 25%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 10% 45%;
+    --accent: 213 70% 95%;
+    --accent-foreground: 213 94% 40%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 160 84% 35%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 213 94% 48%;
+    --success: 142 71% 40%;
+    --success-foreground: 142 71% 15%;
+    --warning: 38 92% 45%;
+    --warning-foreground: 38 92% 15%;
+    --info: 199 89% 45%;
+    --info-foreground: 199 89% 15%;
     --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 222 47% 11%;
-    --sidebar-primary: 160 84% 35%;
+    --sidebar-foreground: 220 20% 25%;
+    --sidebar-primary: 213 94% 48%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 160 40% 96%;
-    --sidebar-accent-foreground: 160 84% 30%;
-    --sidebar-border: 214 32% 91%;
-    --sidebar-ring: 160 84% 35%;
+    --sidebar-accent: 213 70% 97%;
+    --sidebar-accent-foreground: 213 94% 40%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 213 94% 48%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(213 94% 48%) 0%, hsl(213 94% 40%) 100%);
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(220 14% 98%) 100%);
+    --gradient-glass: linear-gradient(135deg, hsla(213 94% 48% / 0.06) 0%, hsla(213 94% 48% / 0.02) 100%);
+    --shadow-glow: 0 0 20px -8px hsl(213 94% 48% / 0.2);
+    --shadow-card: 0 1px 3px hsl(220 20% 14% / 0.08), 0 1px 2px hsl(220 20% 14% / 0.06);
   }
 }
 
@@ -119,9 +131,10 @@
 }
 
 @layer components {
+  /* Clean card styles - Enterprise dashboard aesthetic */
   .glass-card {
-    @apply bg-card/80 backdrop-blur-xl border border-border/50;
-    background-image: var(--gradient-glass);
+    @apply bg-card border border-border rounded-lg;
+    box-shadow: var(--shadow-card);
   }
 
   .glow-primary {
@@ -142,58 +155,61 @@
     background-image: var(--gradient-gold);
   }
 
+  /* Subtle card hover effect */
   .card-shine {
     position: relative;
     overflow: hidden;
+    transition: all 0.2s ease;
   }
 
-  .card-shine::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      hsla(0, 0%, 100%, 0.05),
-      transparent
-    );
-    animation: shine 3s infinite;
+  .card-shine:hover {
+    box-shadow: 0 4px 12px hsl(0 0% 0% / 0.15);
   }
 
-  @keyframes shine {
-    0% { left: -100%; }
-    50%, 100% { left: 100%; }
-  }
-
-  .animate-float {
-    animation: float 6s ease-in-out infinite;
-  }
-
-  @keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-10px); }
-  }
-
-  .animate-pulse-slow {
-    animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  }
-
+  /* Professional stat card */
   .stat-card {
-    @apply glass-card rounded-xl p-6 transition-all duration-300 hover:border-primary/50 hover:glow-primary;
+    @apply bg-card border border-border rounded-lg p-5 transition-all duration-200;
+    box-shadow: var(--shadow-card);
   }
 
+  .stat-card:hover {
+    @apply border-primary/30;
+    box-shadow: var(--shadow-glow);
+  }
+
+  /* Credit card variants - Professional banking look */
   .credit-card-gradient {
-    background: linear-gradient(135deg, hsl(222 47% 12%) 0%, hsl(222 47% 8%) 50%, hsl(160 84% 15%) 100%);
+    background: linear-gradient(135deg, hsl(220 20% 18%) 0%, hsl(213 30% 22%) 50%, hsl(213 40% 28%) 100%);
   }
 
   .credit-card-gold {
-    background: linear-gradient(135deg, hsl(43 80% 40%) 0%, hsl(38 92% 35%) 50%, hsl(30 85% 30%) 100%);
+    background: linear-gradient(135deg, hsl(38 70% 45%) 0%, hsl(32 75% 38%) 50%, hsl(28 70% 32%) 100%);
   }
 
   .credit-card-platinum {
-    background: linear-gradient(135deg, hsl(220 20% 50%) 0%, hsl(220 15% 35%) 50%, hsl(220 20% 25%) 100%);
+    background: linear-gradient(135deg, hsl(220 15% 45%) 0%, hsl(220 12% 35%) 50%, hsl(220 10% 28%) 100%);
+  }
+
+  /* Focus states for accessibility */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background;
+  }
+
+  /* Data table styles */
+  .data-table-row {
+    @apply border-b border-border transition-colors hover:bg-muted/50;
+  }
+
+  /* Badge variants */
+  .badge-success {
+    @apply bg-success/15 text-success border border-success/20;
+  }
+
+  .badge-warning {
+    @apply bg-warning/15 text-warning border border-warning/20;
+  }
+
+  .badge-info {
+    @apply bg-info/15 text-info border border-info/20;
   }
 }
