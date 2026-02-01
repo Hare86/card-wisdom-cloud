@@ -303,46 +303,8 @@ export default function Upload() {
         },
       });
 
-      // Check for password requirement - handle both success response with error field
-      // and FunctionsHttpError which wraps 401 responses
-      let isPasswordRequired = response.data?.error === "PASSWORD_REQUIRED" || response.data?.requiresPassword;
-      
-      // When edge function returns 401, Supabase wraps it in FunctionsHttpError
-      // We need to check the error context for PASSWORD_REQUIRED
-      if (!isPasswordRequired && response.error) {
-        const errorMessage = response.error?.message || "";
-        const errorContext = response.error?.context;
-        
-        // Check if error message or context contains password requirement indicators
-        if (
-          errorMessage.includes("PASSWORD_REQUIRED") ||
-          errorMessage.includes("password protected") ||
-          (errorContext && typeof errorContext === "object" && 
-            (errorContext.error === "PASSWORD_REQUIRED" || errorContext.requiresPassword))
-        ) {
-          isPasswordRequired = true;
-        }
-        
-        // Also check if it's a 401 that might be password-related
-        // FunctionsHttpError for 401 includes "non-2xx" in message
-        if (errorMessage.includes("non-2xx") || errorMessage.includes("401")) {
-          // Try to parse the body if available
-          try {
-            const bodyMatch = errorMessage.match(/\{.*\}/);
-            if (bodyMatch) {
-              const parsed = JSON.parse(bodyMatch[0]);
-              if (parsed.error === "PASSWORD_REQUIRED" || parsed.requiresPassword) {
-                isPasswordRequired = true;
-              }
-            }
-          } catch {
-            // If we can't parse, check for keywords
-            if (errorMessage.includes("PASSWORD_REQUIRED") || errorMessage.includes("password")) {
-              isPasswordRequired = true;
-            }
-          }
-        }
-      }
+      // Check for password requirement - now returned as 200 with error field
+      const isPasswordRequired = response.data?.error === "PASSWORD_REQUIRED" || response.data?.requiresPassword;
 
       if (isPasswordRequired) {
         setIsParsing(null);
@@ -355,7 +317,7 @@ export default function Upload() {
         return;
       }
 
-      // Throw if there's an actual error (not password-related)
+      // Throw if there's an actual error
       if (response.error) throw response.error;
       
       const data = response.data;

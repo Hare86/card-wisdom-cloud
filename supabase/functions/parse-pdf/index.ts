@@ -938,6 +938,8 @@ serve(async (req) => {
       
     } catch (e) {
       if (e instanceof Error && e.message === "PASSWORD_REQUIRED") {
+        // Return 200 with error field so Supabase client puts it in response.data
+        // Using 401 causes client to treat it as FunctionsHttpError and body is lost
         return new Response(
           JSON.stringify({
             error: "PASSWORD_REQUIRED",
@@ -945,7 +947,7 @@ serve(async (req) => {
             requiresPassword: true,
           }),
           {
-            status: 401,
+            status: 200,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           }
         );
