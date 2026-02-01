@@ -153,6 +153,73 @@ function detectCardType(text: string): { cardName: string; bankName: string; con
   return { cardName: "Unknown", bankName: "Unknown", confidence: "low" };
 }
 
+// Name validation and sanitization
+const NAME_VALIDATION = {
+  minLength: 2,
+  maxLength: 50,
+  // Allow letters, numbers, spaces, hyphens, periods, and common bank name characters
+  validPattern: /^[a-zA-Z0-9\s\-\.&']+$/,
+  // Reserved/invalid names that shouldn't be allowed
+  invalidNames: ["unknown", "null", "undefined", "none", "n/a", "test", "default"],
+};
+
+function validateName(name: string, type: "card" | "bank"): { isValid: boolean; error?: string; sanitized: string } {
+  // Trim and normalize whitespace
+  const sanitized = name.trim().replace(/\s+/g, " ");
+  
+  // Check for empty or undefined
+  if (!sanitized || sanitized.length === 0) {
+    return { isValid: false, error: `${type} name cannot be empty`, sanitized: "" };
+  }
+  
+  // Check minimum length
+  if (sanitized.length < NAME_VALIDATION.minLength) {
+    return { isValid: false, error: `${type} name must be at least ${NAME_VALIDATION.minLength} characters`, sanitized };
+  }
+  
+  // Check maximum length
+  if (sanitized.length > NAME_VALIDATION.maxLength) {
+    return { isValid: false, error: `${type} name cannot exceed ${NAME_VALIDATION.maxLength} characters`, sanitized: sanitized.substring(0, NAME_VALIDATION.maxLength) };
+  }
+  
+  // Check for invalid characters
+  if (!NAME_VALIDATION.validPattern.test(sanitized)) {
+    return { isValid: false, error: `${type} name contains invalid characters`, sanitized: sanitized.replace(/[^a-zA-Z0-9\s\-\.&']/g, "") };
+  }
+  
+  // Check for reserved/invalid names
+  if (NAME_VALIDATION.invalidNames.includes(sanitized.toLowerCase())) {
+    return { isValid: false, error: `${type} name "${sanitized}" is not allowed`, sanitized };
+  }
+  
+  return { isValid: true, sanitized };
+}
+
+function validateCardData(cardName: string, bankName: string): { 
+  isValid: boolean; 
+  errors: string[]; 
+  sanitizedCardName: string; 
+  sanitizedBankName: string;
+} {
+  const cardValidation = validateName(cardName, "card");
+  const bankValidation = validateName(bankName, "bank");
+  
+  const errors: string[] = [];
+  if (!cardValidation.isValid && cardValidation.error) {
+    errors.push(cardValidation.error);
+  }
+  if (!bankValidation.isValid && bankValidation.error) {
+    errors.push(bankValidation.error);
+  }
+  
+  return {
+    isValid: cardValidation.isValid && bankValidation.isValid,
+    errors,
+    sanitizedCardName: cardValidation.sanitized,
+    sanitizedBankName: bankValidation.sanitized,
+  };
+}
+
 function calculatePoints(amount: number, category: string, cardName: string): number {
   const rewardRates: Record<string, Record<string, number>> = {
     "Infinia": { "Travel": 5, "Dining": 3, "Shopping": 2, "Other": 1 },
@@ -457,55 +524,72 @@ serve(async (req) => {
       .update({ parsed_data: summary })
       .eq("id", documentId);
 
-    // Step 8b: Create or update credit card entry
+    // Step 8b: Create or update credit card entry with validation
     if (detectedCard.confidence !== "low" && detectedCard.bankName !== "Unknown") {
-      const totalPointsFromStatement = summary.total_points_earned || 0;
+      // Validate card and bank names before database operations
+      const validation = validateCardData(detectedCard.cardName, detectedCard.bankName);
       
-      // Check if card already exists for this user (by bank + card name)
-      const { data: existingCards } = await supabase
-        .from("credit_cards")
-        .select("id, points")
-        .eq("user_id", userId)
-        .eq("bank_name", detectedCard.bankName)
-        .eq("card_name", detectedCard.cardName)
-        .limit(1);
-
-      if (existingCards && existingCards.length > 0) {
-        // Update existing card - add new points
-        const existingCard = existingCards[0];
-        await supabase
-          .from("credit_cards")
-          .update({ 
-            points: (existingCard.points || 0) + totalPointsFromStatement,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", existingCard.id);
-        console.log(`Updated existing card ${detectedCard.bankName} ${detectedCard.cardName} with ${totalPointsFromStatement} new points`);
+      if (!validation.isValid) {
+        console.warn(`Card name validation failed: ${validation.errors.join(", ")}`);
+        console.log(`Attempting to use sanitized values: card="${validation.sanitizedCardName}", bank="${validation.sanitizedBankName}"`);
+      }
+      
+      // Use sanitized values (they're cleaned up even if validation failed)
+      const finalCardName = validation.sanitizedCardName || detectedCard.cardName;
+      const finalBankName = validation.sanitizedBankName || detectedCard.bankName;
+      
+      // Skip card creation if names are still invalid after sanitization
+      if (!finalCardName || finalCardName.length < 2 || !finalBankName || finalBankName.length < 2) {
+        console.error(`Cannot create card: invalid names after sanitization. Card="${finalCardName}", Bank="${finalBankName}"`);
       } else {
-        // Create new card entry
-        const variantMap: Record<string, string> = {
-          "HDFC": "emerald",
-          "Axis": "gold",
-          "ICICI": "platinum",
-          "Amex": "gold",
-          "SBI": "emerald",
-        };
+        const totalPointsFromStatement = summary.total_points_earned || 0;
         
-        const { error: cardError } = await supabase
+        // Check if card already exists for this user (by bank + card name)
+        const { data: existingCards } = await supabase
           .from("credit_cards")
-          .insert({
-            user_id: userId,
-            bank_name: detectedCard.bankName,
-            card_name: detectedCard.cardName,
-            points: totalPointsFromStatement,
-            point_value: 0.40, // Default point value
-            variant: variantMap[detectedCard.bankName] || "emerald",
-          });
-        
-        if (cardError) {
-          console.error("Error creating credit card:", cardError);
+          .select("id, points")
+          .eq("user_id", userId)
+          .eq("bank_name", finalBankName)
+          .eq("card_name", finalCardName)
+          .limit(1);
+
+        if (existingCards && existingCards.length > 0) {
+          // Update existing card - add new points
+          const existingCard = existingCards[0];
+          await supabase
+            .from("credit_cards")
+            .update({ 
+              points: (existingCard.points || 0) + totalPointsFromStatement,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingCard.id);
+          console.log(`Updated existing card ${finalBankName} ${finalCardName} with ${totalPointsFromStatement} new points`);
         } else {
-          console.log(`Created new card: ${detectedCard.bankName} ${detectedCard.cardName} with ${totalPointsFromStatement} points`);
+          // Create new card entry
+          const variantMap: Record<string, string> = {
+            "HDFC": "emerald",
+            "Axis": "gold",
+            "ICICI": "platinum",
+            "Amex": "gold",
+            "SBI": "emerald",
+          };
+          
+          const { error: cardError } = await supabase
+            .from("credit_cards")
+            .insert({
+              user_id: userId,
+              bank_name: finalBankName,
+              card_name: finalCardName,
+              points: totalPointsFromStatement,
+              point_value: 0.40, // Default point value
+              variant: variantMap[finalBankName] || "emerald",
+            });
+          
+          if (cardError) {
+            console.error("Error creating credit card:", cardError);
+          } else {
+            console.log(`Created new card: ${finalBankName} ${finalCardName} with ${totalPointsFromStatement} points`);
+          }
         }
       }
     }
