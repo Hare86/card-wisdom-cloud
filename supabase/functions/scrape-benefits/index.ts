@@ -1,10 +1,25 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// Import shared embedding utilities
+const embeddings = await import("../_shared/embeddings.ts");
+const { generateEmbedding: generateEmbed, embeddingToVector } = embeddings;
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+
+// Helper to generate embedding with error handling
+async function getEmbedding(text: string, apiKey: string): Promise<string | null> {
+  try {
+    const result = await generateEmbed(text, apiKey);
+    return embeddingToVector(result.embedding);
+  } catch (error) {
+    console.error("Embedding error:", error);
+    return null;
+  }
+}
 
 // Bank configurations
 const BANK_CONFIGS: Record<string, { name: string; updateFrequency: string }> = {
@@ -15,7 +30,21 @@ const BANK_CONFIGS: Record<string, { name: string; updateFrequency: string }> = 
 };
 
 // Curated card benefits data (comprehensive knowledge base)
-const CARD_BENEFITS_DATA: Record<string, any[]> = {
+interface Benefit {
+  category: string;
+  title: string;
+  description: string;
+  conditions: string;
+  value_estimate: number;
+}
+
+interface CardData {
+  card_name: string;
+  source_url: string;
+  benefits: Benefit[];
+}
+
+const CARD_BENEFITS_DATA: Record<string, CardData[]> = {
   "HDFC Bank": [
     {
       card_name: "Infinia",
@@ -142,41 +171,6 @@ const CARD_BENEFITS_DATA: Record<string, any[]> = {
   ],
 };
 
-// Generate embedding using Lovable AI Gateway
-async function generateEmbedding(text: string): Promise<number[] | null> {
-  try {
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
-    if (!lovableApiKey) {
-      console.error("LOVABLE_API_KEY not configured");
-      return null;
-    }
-
-    const response = await fetch("https://api.lovable.dev/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${lovableApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "text-embedding-3-small",
-        input: text.substring(0, 8000),
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Embedding API error:", response.status, errorText);
-      return null;
-    }
-
-    const data = await response.json();
-    return data.data?.[0]?.embedding || null;
-  } catch (error) {
-    console.error("Error generating embedding:", error);
-    return null;
-  }
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -185,6 +179,7 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const { action, bank } = await req.json();
@@ -219,7 +214,7 @@ serve(async (req) => {
             const benefitText = `${bankConfig.name} ${card.card_name}: ${benefit.title} - ${benefit.description}. ${benefit.conditions || ""}`;
             console.log(`Generating embedding for: ${benefit.title}`);
             
-            const embedding = await generateEmbedding(benefitText);
+            const embedding = await getEmbedding(benefitText, lovableApiKey);
             
             const { error } = await supabase.from("card_benefits").upsert(
               {
@@ -233,7 +228,7 @@ serve(async (req) => {
                 is_active: true,
                 source_url: card.source_url,
                 last_updated: new Date().toISOString(),
-                embedding: embedding ? `[${embedding.join(",")}]` : null,
+                embedding: embedding,
               },
               { onConflict: "bank_name,card_name,benefit_title" }
             );
@@ -291,7 +286,7 @@ serve(async (req) => {
           for (const benefit of card.benefits) {
             try {
               const benefitText = `${bankConfig.name} ${card.card_name}: ${benefit.title} - ${benefit.description}. ${benefit.conditions || ""}`;
-              const embedding = await generateEmbedding(benefitText);
+              const embedding = await getEmbedding(benefitText, lovableApiKey);
 
               const { error } = await supabase.from("card_benefits").upsert(
                 {
@@ -305,7 +300,7 @@ serve(async (req) => {
                   is_active: true,
                   source_url: card.source_url,
                   last_updated: new Date().toISOString(),
-                  embedding: embedding ? `[${embedding.join(",")}]` : null,
+                  embedding: embedding,
                 },
                 { onConflict: "bank_name,card_name,benefit_title" }
               );
@@ -355,7 +350,7 @@ serve(async (req) => {
           })),
           total_cards: Object.values(CARD_BENEFITS_DATA).reduce((sum, cards) => sum + cards.length, 0),
           total_benefits: Object.values(CARD_BENEFITS_DATA).reduce(
-            (sum, cards) => sum + cards.reduce((s, c) => s + c.benefits.length, 0), 0
+            (sum, cards) => sum + cards.reduce((s: number, c: CardData) => s + c.benefits.length, 0), 0
           ),
           next_full_scrape: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         }),
