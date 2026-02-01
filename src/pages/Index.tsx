@@ -271,33 +271,33 @@ const Index = () => {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4 mb-6 lg:mb-8">
           <StatsCard
             title="Total Points"
-            value={totalPoints.toLocaleString()}
-            subtitle={`Across ${cards.length} card${cards.length !== 1 ? 's' : ''}`}
+            value={cards.length > 0 ? totalPoints.toLocaleString() : "—"}
+            subtitle={cards.length > 0 ? `Across ${cards.length} card${cards.length !== 1 ? 's' : ''}` : "No cards added"}
             icon={Coins}
-            trend={{ value: "12%", positive: true }}
+            trend={cards.length > 0 ? { value: "12%", positive: true } : undefined}
             variant="primary"
           />
           <StatsCard
             title="Total Value"
-            value={`₹${totalValue.toLocaleString()}`}
-            subtitle="At 1:0.40 rate"
+            value={cards.length > 0 ? `₹${totalValue.toLocaleString()}` : "—"}
+            subtitle={cards.length > 0 ? "At 1:0.40 rate" : "Add a card to start"}
             icon={Wallet}
-            trend={{ value: "8%", positive: true }}
+            trend={cards.length > 0 ? { value: "8%", positive: true } : undefined}
             variant="secondary"
           />
           <StatsCard
             title="Monthly Earned"
-            value="4,350"
-            subtitle="pts this month"
+            value={cards.length > 0 ? "4,350" : "—"}
+            subtitle={cards.length > 0 ? "pts this month" : "No activity"}
             icon={TrendingUp}
-            trend={{ value: "23%", positive: true }}
+            trend={cards.length > 0 ? { value: "23%", positive: true } : undefined}
           />
           <StatsCard
             title="Expiring Soon"
-            value="1,250"
-            subtitle="pts in 15 days"
+            value={cards.length > 0 ? "1,250" : "—"}
+            subtitle={cards.length > 0 ? "pts in 15 days" : "Nothing expiring"}
             icon={Clock}
-            variant="warning"
+            variant={cards.length > 0 ? "warning" : "default"}
           />
         </div>
 
