@@ -2,9 +2,17 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // pdf.js for password-protected PDF text extraction (no OCR)
-// Using legacy build with proper Deno compatibility - disableWorker config handles worker-less mode
+// Using legacy build with worker-less mode for Deno/Edge
 // deno-lint-ignore-file no-explicit-any
-import * as pdfjs from "https://esm.sh/pdfjs-dist@4.4.168/legacy/build/pdf.mjs";
+// CRITICAL: Import as namespace and set workerSrc IMMEDIATELY after import
+import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174/legacy/build/pdf.mjs";
+
+// Set worker source at module level - required even in worker-less mode
+// Using CDN URL for the worker file to satisfy pdf.js internal checks
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://esm.sh/pdfjs-dist@3.11.174/legacy/build/pdf.worker.mjs";
+
+// Re-export for convenience
+const getDocument = pdfjsLib.getDocument;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -357,16 +365,12 @@ async function extractTextWithPdfjs(
   password: string
 ): Promise<string> {
   try {
-    // Configure pdf.js for worker-less operation in Deno/Edge
-    // Set workerSrc to empty to disable worker requirement
-    if ((pdfjs as any).GlobalWorkerOptions) {
-      (pdfjs as any).GlobalWorkerOptions.workerSrc = "";
-    }
-    
-    // Use getDocument with worker-compatible options for Deno/Edge environment
-    const loadingTask = pdfjs.getDocument({
+    // pdf.js workerSrc is already set at module level, so we just use getDocument directly
+    // with disableWorker: true for edge runtime compatibility
+    const loadingTask = getDocument({
       data: pdfBytes,
       password,
+      disableWorker: true,
       useWorkerFetch: false,
       isEvalSupported: false,
       useSystemFonts: true,
