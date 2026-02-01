@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -32,7 +32,8 @@ import {
   EyeOff,
   ShieldCheck
 } from "lucide-react";
-import { useEffect } from "react";
+import { validatePDFFile, mapServerError, type PDFParseError } from "@/lib/pdf-validation";
+import { PDFErrorAlert } from "@/components/upload/PDFErrorAlert";
 
 interface UploadedFile {
   id: string;
@@ -93,6 +94,9 @@ export default function Upload() {
   
   // Session-only password cache (memory only - cleared on page refresh)
   const sessionPasswordCacheRef = useRef<SessionPasswordCache>({});
+  
+  // PDF parsing error state for displaying actionable errors
+  const [parseError, setParseError] = useState<(PDFParseError & { fileName?: string }) | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -147,28 +151,69 @@ export default function Upload() {
     setIsDragging(false);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
+    setParseError(null); // Clear previous errors
+    
     const files = Array.from(e.dataTransfer.files).filter(
-      (file) => file.type === "application/pdf"
+      (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith('.pdf')
     );
-    if (files.length > 0) {
-      uploadFiles(files);
-    } else {
+    
+    if (files.length === 0) {
       toast({
         variant: "destructive",
         title: "Invalid file type",
         description: "Please upload PDF files only.",
       });
+      return;
+    }
+    
+    // Validate files before upload
+    const validatedFiles = await validateFilesBeforeUpload(files);
+    if (validatedFiles.length > 0) {
+      uploadFiles(validatedFiles);
     }
   }, [selectedCard]);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setParseError(null); // Clear previous errors
     const files = e.target.files ? Array.from(e.target.files) : [];
+    
     if (files.length > 0) {
-      uploadFiles(files);
+      const validatedFiles = await validateFilesBeforeUpload(files);
+      if (validatedFiles.length > 0) {
+        uploadFiles(validatedFiles);
+      }
     }
+  };
+
+  const validateFilesBeforeUpload = async (files: File[]): Promise<File[]> => {
+    const validFiles: File[] = [];
+    
+    for (const file of files) {
+      const validation = await validatePDFFile(file);
+      
+      if (!validation.isValid) {
+        setParseError({
+          code: validation.errorCode as any,
+          message: validation.errorMessage || '',
+          userMessage: validation.errorMessage || 'File validation failed',
+          suggestedAction: validation.suggestedAction || 'Please try a different file.',
+          fileName: file.name,
+        });
+        
+        toast({
+          variant: "destructive",
+          title: "Invalid PDF file",
+          description: `${file.name}: ${validation.errorMessage}`,
+        });
+      } else {
+        validFiles.push(file);
+      }
+    }
+    
+    return validFiles;
   };
 
   const uploadFiles = async (files: File[]) => {
@@ -278,6 +323,7 @@ export default function Upload() {
     if (!user) return;
 
     setIsParsing(file.id);
+    setParseError(null); // Clear previous errors
 
     try {
       toast({
@@ -311,12 +357,18 @@ export default function Upload() {
         throw new Error("INVALID_PASSWORD");
       }
 
-      // Password was accepted but we still couldn't extract text (e.g. scanned/image-only statement)
-      if (response.data?.error === "UNSUPPORTED_PDF_CONTENT") {
+      // Check for structured error responses from the edge function
+      if (response.data?.error && response.data?.error !== "PASSWORD_REQUIRED") {
+        const parsedError = mapServerError(response.data);
+        setParseError({
+          ...parsedError,
+          fileName: file.file_name,
+        });
+        
         toast({
           variant: "destructive",
-          title: "Parsing not supported",
-          description: response.data?.message || "This PDF format couldn't be parsed.",
+          title: "Parsing failed",
+          description: parsedError.userMessage,
         });
         return;
       }
@@ -344,6 +396,9 @@ export default function Upload() {
           timestamp: Date.now(),
         };
       }
+
+      // Clear any previous errors on success
+      setParseError(null);
 
       const detectedInfo = data.detected_card 
         ? `Detected: ${data.detected_card.bank_name} ${data.detected_card.card_name} (${Math.round(data.confidence * 100)}% confidence)`
@@ -375,10 +430,17 @@ export default function Upload() {
         return;
       }
       
+      // Map the error to user-friendly format
+      const parsedError = mapServerError(errorMessage);
+      setParseError({
+        ...parsedError,
+        fileName: file.file_name,
+      });
+      
       toast({
         variant: "destructive",
         title: "Parsing failed",
-        description: errorMessage,
+        description: parsedError.userMessage,
       });
     } finally {
       setIsParsing(null);
@@ -487,6 +549,26 @@ export default function Upload() {
             Upload any bank's credit card statement - AI adapts to all formats automatically
           </p>
         </div>
+
+        {/* Error Alert */}
+        {parseError && (
+          <div className="mb-6">
+            <PDFErrorAlert
+              errorCode={parseError.code}
+              errorMessage={parseError.userMessage}
+              suggestedAction={parseError.suggestedAction}
+              fileName={parseError.fileName}
+              onDismiss={() => setParseError(null)}
+              onRetry={parseError.fileName ? () => {
+                const file = uploadedFiles.find(f => f.file_name === parseError.fileName);
+                if (file) {
+                  setParseError(null);
+                  parseDocument(file);
+                }
+              } : undefined}
+            />
+          </div>
+        )}
 
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Upload Area */}
