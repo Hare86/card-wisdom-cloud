@@ -72,11 +72,14 @@ This document describes the architecture of the Credit Card Reward Intelligence 
 - RAGAS-style evaluation (faithfulness, relevance)
 - Token usage logging for ROI analysis
 
-#### `parse-pdf` - Document Processing
-- PII detection & masking (credit cards, PAN, Aadhaar, email, phone)
+#### `parse-pdf` - Document Processing (Two-Layer PII Protection)
+- **Layer 1**: OCR extraction with in-prompt PII filtering (gemini-2.5-flash-lite)
+- **Layer 2**: Local regex-based comprehensive masking (no API calls)
+- **Layer 3**: Post-LLM verification pass for AI-generated content
 - Transaction extraction with categorization
 - Points calculation based on card reward rates
 - Document chunking for RAG indexing
+- Full audit trail logging (PIIAuditEntry per stage)
 - Compliance logging
 
 #### `scrape-benefits` - Knowledge Base Updates
@@ -111,10 +114,28 @@ This document describes the architecture of the Credit Card Reward Intelligence 
 
 ### 4. Security & Compliance
 
-- **PII Masking**: Regex patterns for credit cards, PAN, Aadhaar, email, phone
+#### PII Protection Pipeline (Three-Layer Defense)
+1. **OCR Inline Filtering**: LLM instructed to mask PII during text extraction
+2. **Local Regex Masking**: Comprehensive pattern matching (credit cards, PAN, Aadhaar, email, phone, addresses)
+3. **Post-LLM Verification**: Final pass on AI-generated content
+
+#### Masked PII Types
+- Credit card numbers → `XXXX-XXXX-XXXX-[last4]`
+- PAN → `XXXXX****X`
+- Aadhaar → `XXXX-XXXX-****`
+- Email → `xx***@domain.com`
+- Phone → `XXXXXX[last4]`
+- Addresses → `[ADDRESS_MASKED]`
+- Account numbers → `[ACCOUNT_MASKED]`
+
+#### Audit Trail
+- `PIIAuditEntry` records per masking stage (ocr_inline, pre_llm_local, post_llm)
+- `pii_masking_log` table: PII types found, fields masked per document
+- `extraction_audit_log` table: Full processing metadata including tokens used
+- `compliance_logs` table: Resource access and masking flags
+
 - **Encryption**: At-rest and in-transit
 - **RLS Policies**: Row-level security on all user tables
-- **Audit Logging**: All data access logged
 - **GDPR Alignment**: Data minimization, purpose limitation
 - **PCI-DSS Alignment**: Card data masking, access controls
 
