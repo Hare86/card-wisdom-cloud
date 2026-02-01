@@ -355,6 +355,243 @@ If password-protected without valid password: PASSWORD_REQUIRED`;
   return { rawText: content, tokensUsed, ocrMaskedTypes };
 }
 
+// ============================================================================
+// PDF ERROR DETECTION - Comprehensive error handling for edge cases
+// ============================================================================
+
+interface PDFErrorInfo {
+  code: string;
+  message: string;
+  userMessage: string;
+  recoverable: boolean;
+  suggestedAction?: string;
+}
+
+const PDF_ERROR_CODES = {
+  CORRUPTED_FILE: "CORRUPTED_FILE",
+  INVALID_STRUCTURE: "INVALID_STRUCTURE",
+  UNSUPPORTED_VERSION: "UNSUPPORTED_VERSION",
+  ENCRYPTED_UNSUPPORTED: "ENCRYPTED_UNSUPPORTED",
+  PASSWORD_REQUIRED: "PASSWORD_REQUIRED",
+  INVALID_PASSWORD: "INVALID_PASSWORD",
+  EMPTY_DOCUMENT: "EMPTY_DOCUMENT",
+  NO_TEXT_CONTENT: "PDF_TEXT_EXTRACTION_EMPTY",
+  PARSE_TIMEOUT: "PARSE_TIMEOUT",
+  FILE_TOO_LARGE: "FILE_TOO_LARGE",
+  UNKNOWN_ERROR: "UNKNOWN_ERROR",
+} as const;
+
+/**
+ * Classify pdf.js errors into user-friendly error categories
+ */
+function classifyPDFError(err: unknown): PDFErrorInfo {
+  const msg = err instanceof Error ? err.message : String(err);
+  const name = err && typeof err === "object" ? (err as any).name : undefined;
+  const msgLower = msg.toLowerCase();
+
+  // Password-related errors
+  if (name === "PasswordException" || msgLower.includes("password")) {
+    if (msgLower.includes("incorrect") || msgLower.includes("wrong") || msgLower.includes("invalid")) {
+      return {
+        code: PDF_ERROR_CODES.INVALID_PASSWORD,
+        message: msg,
+        userMessage: "The password you entered is incorrect. Please try again.",
+        recoverable: true,
+        suggestedAction: "Enter the correct password",
+      };
+    }
+    return {
+      code: PDF_ERROR_CODES.PASSWORD_REQUIRED,
+      message: msg,
+      userMessage: "This PDF is password protected. Please provide the password.",
+      recoverable: true,
+      suggestedAction: "Enter the PDF password",
+    };
+  }
+
+  // Corrupted file errors
+  if (
+    msgLower.includes("invalid pdf") ||
+    msgLower.includes("not a pdf") ||
+    msgLower.includes("missing pdf") ||
+    msgLower.includes("pdf header") ||
+    msgLower.includes("startxref") ||
+    msgLower.includes("xref") ||
+    msgLower.includes("trailer") ||
+    msgLower.includes("eof marker") ||
+    msgLower.includes("stream not found") ||
+    msgLower.includes("unexpected end")
+  ) {
+    return {
+      code: PDF_ERROR_CODES.CORRUPTED_FILE,
+      message: msg,
+      userMessage: "This PDF file appears to be corrupted or incomplete. Please try downloading the statement again from your bank.",
+      recoverable: false,
+      suggestedAction: "Download a fresh copy of the PDF from your bank",
+    };
+  }
+
+  // Invalid structure errors
+  if (
+    msgLower.includes("invalid object") ||
+    msgLower.includes("bad xref") ||
+    msgLower.includes("object stream") ||
+    msgLower.includes("linearization") ||
+    msgLower.includes("catalog") ||
+    msgLower.includes("root object")
+  ) {
+    return {
+      code: PDF_ERROR_CODES.INVALID_STRUCTURE,
+      message: msg,
+      userMessage: "This PDF has an unsupported structure. Some bank statements use specialized formatting that we cannot process. Please try uploading a different format if available.",
+      recoverable: false,
+      suggestedAction: "Request a different format from your bank",
+    };
+  }
+
+  // Unsupported encryption
+  if (
+    msgLower.includes("unsupported encryption") ||
+    msgLower.includes("encryption method") ||
+    msgLower.includes("aes-256") ||
+    msgLower.includes("security handler")
+  ) {
+    return {
+      code: PDF_ERROR_CODES.ENCRYPTED_UNSUPPORTED,
+      message: msg,
+      userMessage: "This PDF uses an encryption method we don't support. Please try exporting an unencrypted version from your bank portal.",
+      recoverable: false,
+      suggestedAction: "Download an unencrypted PDF from your bank",
+    };
+  }
+
+  // Empty document
+  if (
+    msgLower.includes("no pages") ||
+    msgLower.includes("empty document") ||
+    msgLower.includes("zero pages") ||
+    msgLower.includes("numpages is 0")
+  ) {
+    return {
+      code: PDF_ERROR_CODES.EMPTY_DOCUMENT,
+      message: msg,
+      userMessage: "This PDF appears to be empty or has no readable pages. Please ensure you uploaded the correct file.",
+      recoverable: false,
+      suggestedAction: "Verify you uploaded the correct file",
+    };
+  }
+
+  // Unsupported PDF version
+  if (
+    msgLower.includes("pdf version") ||
+    msgLower.includes("unsupported version")
+  ) {
+    return {
+      code: PDF_ERROR_CODES.UNSUPPORTED_VERSION,
+      message: msg,
+      userMessage: "This PDF uses a version we don't fully support. The extraction may be incomplete.",
+      recoverable: true,
+      suggestedAction: "Try re-saving the PDF with a different tool",
+    };
+  }
+
+  // File size issues
+  if (
+    msgLower.includes("too large") ||
+    msgLower.includes("memory") ||
+    msgLower.includes("allocation failed")
+  ) {
+    return {
+      code: PDF_ERROR_CODES.FILE_TOO_LARGE,
+      message: msg,
+      userMessage: "This PDF is too large to process. Please try uploading a smaller file (under 20MB) or split the statement into multiple files.",
+      recoverable: false,
+      suggestedAction: "Upload a smaller PDF file",
+    };
+  }
+
+  // Timeout
+  if (
+    msgLower.includes("timeout") ||
+    msgLower.includes("timed out") ||
+    msgLower.includes("deadline exceeded")
+  ) {
+    return {
+      code: PDF_ERROR_CODES.PARSE_TIMEOUT,
+      message: msg,
+      userMessage: "Processing took too long. Please try again with a smaller file or during off-peak hours.",
+      recoverable: true,
+      suggestedAction: "Try again later or with a smaller file",
+    };
+  }
+
+  // Default unknown error
+  return {
+    code: PDF_ERROR_CODES.UNKNOWN_ERROR,
+    message: msg,
+    userMessage: "We encountered an unexpected error processing this PDF. Please try again or contact support if the issue persists.",
+    recoverable: true,
+    suggestedAction: "Try uploading again",
+  };
+}
+
+/**
+ * Validate PDF file before attempting to parse
+ * Quick checks to catch obviously corrupted files early
+ */
+function validatePDFBytes(pdfBytes: Uint8Array): { valid: boolean; error?: PDFErrorInfo } {
+  // Check minimum size (a valid PDF is at least ~100 bytes)
+  if (pdfBytes.length < 100) {
+    return {
+      valid: false,
+      error: {
+        code: PDF_ERROR_CODES.CORRUPTED_FILE,
+        message: "File too small to be a valid PDF",
+        userMessage: "This file is too small to be a valid PDF. Please ensure you uploaded the correct file.",
+        recoverable: false,
+      },
+    };
+  }
+
+  // Check PDF header magic bytes (%PDF-)
+  const header = new TextDecoder().decode(pdfBytes.slice(0, 8));
+  if (!header.startsWith("%PDF-")) {
+    return {
+      valid: false,
+      error: {
+        code: PDF_ERROR_CODES.CORRUPTED_FILE,
+        message: `Invalid PDF header: ${header.slice(0, 8)}`,
+        userMessage: "This file doesn't appear to be a valid PDF. Please ensure you uploaded a PDF file.",
+        recoverable: false,
+      },
+    };
+  }
+
+  // Check for truncated file (should end with %%EOF or close to it)
+  const tailSize = Math.min(1024, pdfBytes.length);
+  const tail = new TextDecoder().decode(pdfBytes.slice(-tailSize));
+  if (!tail.includes("%%EOF")) {
+    console.warn("[PDF VALIDATION] Warning: PDF may be truncated (no %%EOF found)");
+    // Don't fail here, as some PDFs work without proper EOF marker
+  }
+
+  // Check file size limit (20MB)
+  const MAX_SIZE = 20 * 1024 * 1024;
+  if (pdfBytes.length > MAX_SIZE) {
+    return {
+      valid: false,
+      error: {
+        code: PDF_ERROR_CODES.FILE_TOO_LARGE,
+        message: `File size ${(pdfBytes.length / 1024 / 1024).toFixed(2)}MB exceeds limit`,
+        userMessage: `This PDF is too large (${(pdfBytes.length / 1024 / 1024).toFixed(1)}MB). Please upload a file under 20MB.`,
+        recoverable: false,
+      },
+    };
+  }
+
+  return { valid: true };
+}
+
 /**
  * Password-protected PDFs cannot be read by the AI gateway directly (it sees "no pages").
  * When a password is provided, we extract text locally using pdf.js and then run the normal
@@ -364,7 +601,16 @@ async function extractTextWithPdfjs(
   pdfBytes: Uint8Array,
   password: string
 ): Promise<string> {
+  // Pre-validation
+  const validation = validatePDFBytes(pdfBytes);
+  if (!validation.valid && validation.error) {
+    console.error(`[PDF VALIDATION] Failed: ${validation.error.code} - ${validation.error.message}`);
+    throw new Error(validation.error.code);
+  }
+
   try {
+    console.log(`[PDF.JS] Starting extraction with password (${pdfBytes.length} bytes)`);
+    
     // pdf.js workerSrc is already set at module level, so we just use getDocument directly
     // with disableWorker: true for edge runtime compatibility
     const loadingTask = getDocument({
@@ -374,38 +620,66 @@ async function extractTextWithPdfjs(
       useWorkerFetch: false,
       isEvalSupported: false,
       useSystemFonts: true,
+      stopAtErrors: false, // Continue parsing even if some objects are invalid
     } as any);
 
-    const doc = await loadingTask.promise;
-    const maxPages = Math.min(doc.numPages || 0, 12);
+    // Add timeout for the loading task
+    const timeoutMs = 30000; // 30 second timeout
+    const doc = await Promise.race([
+      loadingTask.promise,
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("PDF parsing timeout")), timeoutMs)
+      ),
+    ]) as any;
+
+    const numPages = doc.numPages || 0;
+    if (numPages === 0) {
+      throw new Error("PDF has zero pages");
+    }
+
+    console.log(`[PDF.JS] Document loaded with ${numPages} pages`);
+    const maxPages = Math.min(numPages, 12);
     let out = "";
+    let failedPages = 0;
 
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-      const page = await doc.getPage(pageNum);
-      const textContent = await page.getTextContent();
-      const items = (textContent?.items || []) as any[];
-      const pageText = items
-        .map((it: any) => (typeof it?.str === "string" ? it.str : ""))
-        .filter(Boolean)
-        .join(" ");
-      out += `\n\n--- PAGE ${pageNum} ---\n${pageText}`;
+      try {
+        const page = await doc.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const items = (textContent?.items || []) as any[];
+        const pageText = items
+          .map((it: any) => (typeof it?.str === "string" ? it.str : ""))
+          .filter(Boolean)
+          .join(" ");
+        out += `\n\n--- PAGE ${pageNum} ---\n${pageText}`;
+      } catch (pageErr) {
+        console.warn(`[PDF.JS] Failed to extract page ${pageNum}:`, pageErr);
+        failedPages++;
+        // Continue with other pages
+      }
+    }
+
+    if (failedPages > 0) {
+      console.warn(`[PDF.JS] ${failedPages}/${maxPages} pages failed to extract`);
     }
 
     const trimmed = out.trim();
     if (!trimmed) {
       // If the PDF is image/scanned-based, pdf.js text extraction returns empty.
-      throw new Error("PDF_TEXT_EXTRACTION_EMPTY");
+      console.log("[PDF.JS] No text content extracted (likely scanned/image PDF)");
+      throw new Error(PDF_ERROR_CODES.NO_TEXT_CONTENT);
     }
 
+    console.log(`[PDF.JS] Extracted ${trimmed.length} characters from ${maxPages - failedPages} pages`);
     return trimmed;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const name = err && typeof err === "object" ? (err as any).name : undefined;
-    // pdf.js throws PasswordException for missing/incorrect passwords
-    if (name === "PasswordException" || msg.toLowerCase().includes("password")) {
-      throw new Error("INVALID_PASSWORD");
-    }
-    throw err;
+    const errorInfo = classifyPDFError(err);
+    console.error(`[PDF.JS] Error: ${errorInfo.code} - ${errorInfo.message}`);
+    
+    // Re-throw with the classified error code
+    const error = new Error(errorInfo.code);
+    (error as any).pdfErrorInfo = errorInfo;
+    throw error;
   }
 }
 
@@ -955,9 +1229,28 @@ serve(async (req) => {
 
     console.log(`[STEP 1] Downloaded PDF: ${fileData.size} bytes`);
 
-    // Step 2: Convert to base64
+    // Step 2: Convert to base64 and validate PDF structure
     const arrayBuffer = await fileData.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
+    
+    // Early validation to catch corrupted files before expensive processing
+    const validation = validatePDFBytes(uint8Array);
+    if (!validation.valid && validation.error) {
+      console.error(`[VALIDATION] PDF failed validation: ${validation.error.code}`);
+      return new Response(
+        JSON.stringify({
+          error: validation.error.code,
+          message: validation.error.userMessage,
+          suggestedAction: validation.error.suggestedAction,
+          recoverable: validation.error.recoverable,
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+    
     let binary = "";
     for (let i = 0; i < uint8Array.length; i++) {
       binary += String.fromCharCode(uint8Array[i]);
@@ -1006,14 +1299,18 @@ serve(async (req) => {
       auditParams.llmTokensOutput += ocrResult.tokensUsed.output;
       
     } catch (e) {
-      if (e instanceof Error && e.message === "PASSWORD_REQUIRED") {
-        // Return 200 with error field so Supabase client puts it in response.data
-        // Using 401 causes client to treat it as FunctionsHttpError and body is lost
+      // Get detailed error info if available
+      const errorInfo = (e as any).pdfErrorInfo as PDFErrorInfo | undefined;
+      const errorCode = e instanceof Error ? e.message : "UNKNOWN_ERROR";
+      
+      // Handle specific error codes with user-friendly responses
+      if (errorCode === PDF_ERROR_CODES.PASSWORD_REQUIRED) {
         return new Response(
           JSON.stringify({
             error: "PASSWORD_REQUIRED",
-            message: "This PDF is password protected. Please provide the password.",
+            message: errorInfo?.userMessage || "This PDF is password protected. Please provide the password.",
             requiresPassword: true,
+            suggestedAction: errorInfo?.suggestedAction,
           }),
           {
             status: 200,
@@ -1022,12 +1319,13 @@ serve(async (req) => {
         );
       }
 
-      if (e instanceof Error && e.message === "INVALID_PASSWORD") {
+      if (errorCode === PDF_ERROR_CODES.INVALID_PASSWORD) {
         return new Response(
           JSON.stringify({
             error: "INVALID_PASSWORD",
-            message: "Incorrect password. Please try again.",
+            message: errorInfo?.userMessage || "Incorrect password. Please try again.",
             requiresPassword: true,
+            suggestedAction: errorInfo?.suggestedAction,
           }),
           {
             status: 200,
@@ -1036,12 +1334,12 @@ serve(async (req) => {
         );
       }
 
-      if (e instanceof Error && e.message === "PDF_TEXT_EXTRACTION_EMPTY") {
+      if (errorCode === PDF_ERROR_CODES.NO_TEXT_CONTENT) {
         return new Response(
           JSON.stringify({
             error: "UNSUPPORTED_PDF_CONTENT",
-            message:
-              "We could open the PDF, but couldn't extract text (it may be a scanned/image-only statement). Please upload a text-based statement PDF.",
+            message: errorInfo?.userMessage || "We could open the PDF, but couldn't extract text (it may be a scanned/image-only statement). Please upload a text-based statement PDF.",
+            suggestedAction: errorInfo?.suggestedAction || "Use OCR software to convert scanned PDFs",
           }),
           {
             status: 200,
@@ -1050,6 +1348,97 @@ serve(async (req) => {
         );
       }
 
+      if (errorCode === PDF_ERROR_CODES.CORRUPTED_FILE) {
+        return new Response(
+          JSON.stringify({
+            error: "CORRUPTED_FILE",
+            message: errorInfo?.userMessage || "This PDF file appears to be corrupted or incomplete. Please try downloading the statement again from your bank.",
+            suggestedAction: errorInfo?.suggestedAction,
+            recoverable: false,
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      if (errorCode === PDF_ERROR_CODES.INVALID_STRUCTURE) {
+        return new Response(
+          JSON.stringify({
+            error: "INVALID_STRUCTURE",
+            message: errorInfo?.userMessage || "This PDF has an unsupported structure. Please try uploading a different format if available.",
+            suggestedAction: errorInfo?.suggestedAction,
+            recoverable: false,
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      if (errorCode === PDF_ERROR_CODES.FILE_TOO_LARGE) {
+        return new Response(
+          JSON.stringify({
+            error: "FILE_TOO_LARGE",
+            message: errorInfo?.userMessage || "This PDF is too large to process. Please upload a file under 20MB.",
+            suggestedAction: errorInfo?.suggestedAction,
+            recoverable: false,
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      if (errorCode === PDF_ERROR_CODES.ENCRYPTED_UNSUPPORTED) {
+        return new Response(
+          JSON.stringify({
+            error: "ENCRYPTED_UNSUPPORTED",
+            message: errorInfo?.userMessage || "This PDF uses an encryption method we don't support. Please try exporting an unencrypted version.",
+            suggestedAction: errorInfo?.suggestedAction,
+            recoverable: false,
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      if (errorCode === PDF_ERROR_CODES.EMPTY_DOCUMENT) {
+        return new Response(
+          JSON.stringify({
+            error: "EMPTY_DOCUMENT",
+            message: errorInfo?.userMessage || "This PDF appears to be empty. Please ensure you uploaded the correct file.",
+            suggestedAction: errorInfo?.suggestedAction,
+            recoverable: false,
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      if (errorCode === PDF_ERROR_CODES.PARSE_TIMEOUT) {
+        return new Response(
+          JSON.stringify({
+            error: "PARSE_TIMEOUT",
+            message: errorInfo?.userMessage || "Processing took too long. Please try again with a smaller file.",
+            suggestedAction: errorInfo?.suggestedAction,
+            recoverable: true,
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      // Re-throw unknown errors to be caught by the outer handler
       throw e;
     }
 
