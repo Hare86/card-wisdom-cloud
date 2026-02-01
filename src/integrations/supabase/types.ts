@@ -244,6 +244,84 @@ export type Database = {
           },
         ]
       }
+      extraction_audit_log: {
+        Row: {
+          confidence_score: number | null
+          created_at: string
+          document_id: string | null
+          error_message: string | null
+          extraction_method: string
+          extraction_status: string
+          fields_extracted: number
+          id: string
+          ip_address: string | null
+          llm_model_used: string | null
+          llm_tokens_input: number | null
+          llm_tokens_output: number | null
+          password_protected: boolean
+          pii_fields_masked: number
+          processing_time_ms: number | null
+          template_id: string | null
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          confidence_score?: number | null
+          created_at?: string
+          document_id?: string | null
+          error_message?: string | null
+          extraction_method: string
+          extraction_status?: string
+          fields_extracted?: number
+          id?: string
+          ip_address?: string | null
+          llm_model_used?: string | null
+          llm_tokens_input?: number | null
+          llm_tokens_output?: number | null
+          password_protected?: boolean
+          pii_fields_masked?: number
+          processing_time_ms?: number | null
+          template_id?: string | null
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          confidence_score?: number | null
+          created_at?: string
+          document_id?: string | null
+          error_message?: string | null
+          extraction_method?: string
+          extraction_status?: string
+          fields_extracted?: number
+          id?: string
+          ip_address?: string | null
+          llm_model_used?: string | null
+          llm_tokens_input?: number | null
+          llm_tokens_output?: number | null
+          password_protected?: boolean
+          pii_fields_masked?: number
+          processing_time_ms?: number | null
+          template_id?: string | null
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "extraction_audit_log_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "pdf_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "extraction_audit_log_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "statement_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pdf_documents: {
         Row: {
           created_at: string
@@ -370,6 +448,57 @@ export type Database = {
           response?: string
           tokens_input?: number | null
           tokens_output?: number | null
+        }
+        Relationships: []
+      }
+      statement_templates: {
+        Row: {
+          bank_name: string
+          confidence_threshold: number
+          created_at: string
+          extraction_failure_count: number
+          extraction_success_count: number
+          field_patterns: Json
+          header_patterns: Json
+          id: string
+          is_active: boolean
+          last_successful_extraction: string | null
+          table_patterns: Json
+          template_hash: string
+          template_version: number
+          updated_at: string
+        }
+        Insert: {
+          bank_name: string
+          confidence_threshold?: number
+          created_at?: string
+          extraction_failure_count?: number
+          extraction_success_count?: number
+          field_patterns?: Json
+          header_patterns?: Json
+          id?: string
+          is_active?: boolean
+          last_successful_extraction?: string | null
+          table_patterns?: Json
+          template_hash: string
+          template_version?: number
+          updated_at?: string
+        }
+        Update: {
+          bank_name?: string
+          confidence_threshold?: number
+          created_at?: string
+          extraction_failure_count?: number
+          extraction_success_count?: number
+          field_patterns?: Json
+          header_patterns?: Json
+          id?: string
+          is_active?: boolean
+          last_successful_extraction?: string | null
+          table_patterns?: Json
+          template_hash?: string
+          template_version?: number
+          updated_at?: string
         }
         Relationships: []
       }
