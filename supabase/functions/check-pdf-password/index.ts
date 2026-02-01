@@ -93,7 +93,27 @@ No other output. Just the single word.`;
       const errorText = await response.text();
       console.error("[CHECK-PASSWORD] AI check failed:", response.status, errorText);
       
-      // If AI fails, assume not protected to allow normal flow
+      // Detect password-protected PDF: AI Gateway returns "no pages" when PDF is encrypted
+      if (response.status === 400 && (
+        errorText.includes("no pages") || 
+        errorText.includes("document has no pages") ||
+        errorText.includes("empty document") ||
+        errorText.includes("cannot be opened") ||
+        errorText.includes("encrypted") ||
+        errorText.includes("password")
+      )) {
+        console.log("[CHECK-PASSWORD] Detected password-protected PDF via error");
+        return new Response(
+          JSON.stringify({ 
+            isPasswordProtected: true, 
+            documentId,
+            detected: "error_pattern"
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      // If AI fails for other reasons, assume not protected to allow normal flow
       return new Response(
         JSON.stringify({ 
           isPasswordProtected: false, 
