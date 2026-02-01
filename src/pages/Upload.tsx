@@ -293,7 +293,7 @@ export default function Upload() {
           : undefined);
 
       // Call parse-pdf with adaptive AI extraction
-      const { data, error } = await supabase.functions.invoke("parse-pdf", {
+      const response = await supabase.functions.invoke("parse-pdf", {
         body: {
           documentId: file.id,
           userId: user.id,
@@ -303,10 +303,14 @@ export default function Upload() {
         },
       });
 
-      if (error) throw error;
+      // Check for password requirement - Supabase returns FunctionsHttpError for 401
+      // The 401 status from parse-pdf specifically means password is required
+      const isPasswordRequired = 
+        response.data?.error === "PASSWORD_REQUIRED" || 
+        response.data?.requiresPassword ||
+        (response.error?.name === "FunctionsHttpError" && response.error?.message?.includes("non-2xx"));
 
-      // Check if password is required
-      if (data?.error === "PASSWORD_REQUIRED" || data?.requiresPassword) {
+      if (isPasswordRequired) {
         setIsParsing(null);
         setPendingPasswordFile(file);
         setPasswordDialogOpen(true);
@@ -316,6 +320,11 @@ export default function Upload() {
         });
         return;
       }
+
+      // Throw if there's an actual error (not password-related)
+      if (response.error) throw response.error;
+      
+      const data = response.data;
 
       // Success - cache password for session if used
       if (providedPassword) {
