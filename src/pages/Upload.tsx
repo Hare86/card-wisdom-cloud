@@ -306,6 +306,21 @@ export default function Upload() {
       // Check for password requirement - now returned as 200 with error field
       const isPasswordRequired = response.data?.error === "PASSWORD_REQUIRED" || response.data?.requiresPassword;
 
+      // Incorrect password: keep dialog open and show a clear message
+      if (response.data?.error === "INVALID_PASSWORD") {
+        throw new Error("INVALID_PASSWORD");
+      }
+
+      // Password was accepted but we still couldn't extract text (e.g. scanned/image-only statement)
+      if (response.data?.error === "UNSUPPORTED_PDF_CONTENT") {
+        toast({
+          variant: "destructive",
+          title: "Parsing not supported",
+          description: response.data?.message || "This PDF format couldn't be parsed.",
+        });
+        return;
+      }
+
       if (isPasswordRequired) {
         setIsParsing(null);
         setPendingPasswordFile(file);
@@ -343,6 +358,11 @@ export default function Upload() {
     } catch (error) {
       console.error("Parse error:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to parse document. Please try again.";
+
+      if (errorMessage.includes("INVALID_PASSWORD")) {
+        // Bubble up so the password dialog handler can show "Invalid password" and keep the dialog open
+        throw error;
+      }
       
       // Check for password requirement in error
       if (errorMessage.includes("PASSWORD_REQUIRED")) {

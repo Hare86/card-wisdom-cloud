@@ -1,6 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// pdf.js for password-protected PDF text extraction (no OCR)
+// NOTE: We use disableWorker=true for server environments.
+import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.mjs";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
@@ -340,6 +344,59 @@ If password-protected without valid password: PASSWORD_REQUIRED`;
 
   console.log(`[PHASE 1A] OCR extracted ${content.length} chars, inline-masked types: ${ocrMaskedTypes.join(", ") || "none detected"}`);
   return { rawText: content, tokensUsed, ocrMaskedTypes };
+}
+
+/**
+ * Password-protected PDFs cannot be read by the AI gateway directly (it sees “no pages”).
+ * When a password is provided, we extract text locally using pdf.js and then run the normal
+ * Adaptive AI extraction on that text.
+ */
+async function extractTextWithPdfjs(
+  pdfBytes: Uint8Array,
+  password: string
+): Promise<string> {
+  // Reduce pdf.js internal logging
+  const verbosity = (pdfjsLib as any).VerbosityLevel?.ERRORS ?? 0;
+
+  try {
+    const loadingTask = (pdfjsLib as any).getDocument({
+      data: pdfBytes,
+      password,
+      disableWorker: true,
+      verbosity,
+    });
+
+    const doc = await loadingTask.promise;
+    const maxPages = Math.min(doc.numPages || 0, 12);
+    let out = "";
+
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      const page = await doc.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const items = (textContent?.items || []) as any[];
+      const pageText = items
+        .map((it) => (typeof it?.str === "string" ? it.str : ""))
+        .filter(Boolean)
+        .join(" ");
+      out += `\n\n--- PAGE ${pageNum} ---\n${pageText}`;
+    }
+
+    const trimmed = out.trim();
+    if (!trimmed) {
+      // If the PDF is image/scanned-based, pdf.js text extraction returns empty.
+      throw new Error("PDF_TEXT_EXTRACTION_EMPTY");
+    }
+
+    return trimmed;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const name = err && typeof err === "object" ? (err as any).name : undefined;
+    // pdf.js throws PasswordException for missing/incorrect passwords
+    if (name === "PasswordException" || msg.toLowerCase().includes("password")) {
+      throw new Error("INVALID_PASSWORD");
+    }
+    throw err;
+  }
 }
 
 /**
@@ -921,8 +978,17 @@ serve(async (req) => {
     let preMaskingStats: PreExtractionResult;
     
     try {
-      // Layer 1: OCR with inline PII filtering
-      ocrResult = await extractRawTextFromPDF(pdfBase64, password);
+      // If the user provided a password, extract text locally using pdf.js.
+      // This avoids the “no pages” error from AI providers when PDFs are encrypted.
+      if (password && typeof password === "string" && password.trim()) {
+        console.log("[PHASE 1A] Password provided; extracting text with pdf.js...");
+        const rawText = await extractTextWithPdfjs(uint8Array, password);
+        ocrResult = { rawText, tokensUsed: { input: 0, output: 0 }, ocrMaskedTypes: [] };
+        auditParams.extractionMethod = "pdfjs_text_extraction_two_layer_masking";
+      } else {
+        // Layer 1: OCR with inline PII filtering (works for non-encrypted PDFs)
+        ocrResult = await extractRawTextFromPDF(pdfBase64, undefined);
+      }
       
       // Layer 2: Local comprehensive masking
       preMaskingStats = applyComprehensivePIIMasking(
@@ -952,6 +1018,35 @@ serve(async (req) => {
           }
         );
       }
+
+      if (e instanceof Error && e.message === "INVALID_PASSWORD") {
+        return new Response(
+          JSON.stringify({
+            error: "INVALID_PASSWORD",
+            message: "Incorrect password. Please try again.",
+            requiresPassword: true,
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      if (e instanceof Error && e.message === "PDF_TEXT_EXTRACTION_EMPTY") {
+        return new Response(
+          JSON.stringify({
+            error: "UNSUPPORTED_PDF_CONTENT",
+            message:
+              "We could open the PDF, but couldn't extract text (it may be a scanned/image-only statement). Please upload a text-based statement PDF.",
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
       throw e;
     }
 
