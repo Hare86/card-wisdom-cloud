@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.analytics]
 verify_jwt = false
+
+[functions.check-pdf-password]
+verify_jwt = false
