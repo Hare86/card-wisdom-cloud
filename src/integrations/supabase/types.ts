@@ -669,6 +669,7 @@ export type Database = {
           similarity: number
         }[]
       }
+      increment_cache_hit: { Args: { cache_id: string }; Returns: undefined }
       search_benefits: {
         Args: { match_count?: number; query_emb: string }
         Returns: {
