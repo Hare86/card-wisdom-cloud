@@ -2,8 +2,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // pdf.js for password-protected PDF text extraction (no OCR)
-// NOTE: We use disableWorker=true for server environments.
-import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.mjs";
+// Using legacy build with proper Deno compatibility - disableWorker config handles worker-less mode
+// deno-lint-ignore-file no-explicit-any
+import * as pdfjs from "https://esm.sh/pdfjs-dist@4.4.168/legacy/build/pdf.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -347,7 +348,7 @@ If password-protected without valid password: PASSWORD_REQUIRED`;
 }
 
 /**
- * Password-protected PDFs cannot be read by the AI gateway directly (it sees “no pages”).
+ * Password-protected PDFs cannot be read by the AI gateway directly (it sees "no pages").
  * When a password is provided, we extract text locally using pdf.js and then run the normal
  * Adaptive AI extraction on that text.
  */
@@ -355,16 +356,21 @@ async function extractTextWithPdfjs(
   pdfBytes: Uint8Array,
   password: string
 ): Promise<string> {
-  // Reduce pdf.js internal logging
-  const verbosity = (pdfjsLib as any).VerbosityLevel?.ERRORS ?? 0;
-
   try {
-    const loadingTask = (pdfjsLib as any).getDocument({
+    // Configure pdf.js for worker-less operation in Deno/Edge
+    // Set workerSrc to empty to disable worker requirement
+    if ((pdfjs as any).GlobalWorkerOptions) {
+      (pdfjs as any).GlobalWorkerOptions.workerSrc = "";
+    }
+    
+    // Use getDocument with worker-compatible options for Deno/Edge environment
+    const loadingTask = pdfjs.getDocument({
       data: pdfBytes,
       password,
-      disableWorker: true,
-      verbosity,
-    });
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    } as any);
 
     const doc = await loadingTask.promise;
     const maxPages = Math.min(doc.numPages || 0, 12);
@@ -375,7 +381,7 @@ async function extractTextWithPdfjs(
       const textContent = await page.getTextContent();
       const items = (textContent?.items || []) as any[];
       const pageText = items
-        .map((it) => (typeof it?.str === "string" ? it.str : ""))
+        .map((it: any) => (typeof it?.str === "string" ? it.str : ""))
         .filter(Boolean)
         .join(" ");
       out += `\n\n--- PAGE ${pageNum} ---\n${pageText}`;
@@ -426,71 +432,68 @@ function applyComprehensivePIIMasking(
   }
 
   // Extended PII patterns for comprehensive LOCAL masking - ordered by specificity
-  const comprehensivePatterns: Record<string, { 
-    pattern: RegExp; 
-    replacement: string | ((match: string) => string);
-    priority: number;
-  }> = {
-    // HIGH PRIORITY: Financial identifiers
+  const comprehensivePatterns: Record<string, { pattern: RegExp; replacement: string; priority: number }> = {
+    // Credit/Debit cards - most specific first
     creditCard: {
       pattern: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g,
-      replacement: (match: string) => "XXXX-XXXX-XXXX-" + match.slice(-4).replace(/[-\s]/g, ""),
+      replacement: "XXXX-XXXX-XXXX-****",
       priority: 1,
     },
-    cardLast4: {
-      pattern: /(?:card|ending|last\s*4)[:\s#]*\d{4}\b/gi,
-      replacement: "Card: ****XXXX",
+    maskedCardPartial: {
+      pattern: /\bXXXX[-\s]?XXXX[-\s]?XXXX[-\s]?\d{4}\b/g,
+      replacement: "XXXX-XXXX-XXXX-****",
       priority: 1,
     },
-    cvv: {
-      pattern: /\bCVV[:\s]*\d{3,4}\b/gi,
-      replacement: "CVV: XXX",
-      priority: 1,
-    },
-    // Account identifiers
-    accountNumber: {
-      pattern: /(?:account|a\/c|acct|acc)[:\s#]*\d{9,18}/gi,
-      replacement: "Account: XXXXXXXXXX",
-      priority: 2,
-    },
-    // Indian national IDs
-    pan: {
-      pattern: /\b[A-Z]{5}\d{4}[A-Z]\b/g,
-      replacement: "XXXXX****X",
-      priority: 2,
-    },
+    // Government IDs
     aadhaar: {
       pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g,
       replacement: "XXXX-XXXX-****",
       priority: 2,
     },
-    // Contact information
+    pan: {
+      pattern: /\b[A-Z]{5}\d{4}[A-Z]\b/g,
+      replacement: "XXXXX****X",
+      priority: 2,
+    },
+    passport: {
+      pattern: /\b[A-Z]\d{7}\b/g,
+      replacement: "X*******",
+      priority: 2,
+    },
+    // Contact info
     email: {
       pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
-      replacement: (match: string) => {
-        const [local, domain] = match.split("@");
-        return local.substring(0, 2) + "***@" + domain;
-      },
-      priority: 3,
+      replacement: "[EMAIL_MASKED]",
+      priority: 2,
     },
     phone: {
       pattern: /\b(?:\+91[-\s]?)?[6-9]\d{9}\b/g,
-      replacement: (match: string) => match.slice(0, -4).replace(/\d/g, "X") + match.slice(-4),
+      replacement: "XXXXXX****",
+      priority: 2,
+    },
+    phoneWithCode: {
+      pattern: /\b(?:\+\d{1,3}[-\s]?)?\(?\d{2,4}\)?[-\s]?\d{3,4}[-\s]?\d{4}\b/g,
+      replacement: "[PHONE_MASKED]",
+      priority: 2,
+    },
+    // Financial
+    accountNumber: {
+      pattern: /(?:A\/C|Account|Acct)[:\s#]*\d{9,18}/gi,
+      replacement: "Account: XXXXXXXXXX",
       priority: 3,
     },
-    internationalPhone: {
-      pattern: /\b\+\d{1,3}[-\s]?\d{6,14}\b/g,
-      replacement: "+XX-XXXXXX****",
-      priority: 3,
-    },
-    // Bank identifiers
     ifsc: {
       pattern: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g,
       replacement: "XXXX0XXXXXX",
       priority: 3,
     },
-    swift: {
-      pattern: /\b[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/g,
+    cvv: {
+      pattern: /\bCVV[:\s]*\d{3,4}\b/gi,
+      replacement: "CVV: XXX",
+      priority: 3,
+    },
+    bankAccountGeneric: {
+      pattern: /\b\d{9,18}\b/g,
       replacement: "XXXXXX**",
       priority: 3,
     },
@@ -587,11 +590,7 @@ function applyComprehensivePIIMasking(
         timestamp,
       });
       
-      if (typeof replacement === "function") {
-        maskedText = maskedText.replace(pattern, replacement);
-      } else {
-        maskedText = maskedText.replace(pattern, replacement);
-      }
+      maskedText = maskedText.replace(pattern, replacement);
     }
   }
 
@@ -979,18 +978,18 @@ serve(async (req) => {
     
     try {
       // If the user provided a password, extract text locally using pdf.js.
-      // This avoids the “no pages” error from AI providers when PDFs are encrypted.
+      // This avoids the "no pages" error from AI providers when PDFs are encrypted.
       if (password && typeof password === "string" && password.trim()) {
         console.log("[PHASE 1A] Password provided; extracting text with pdf.js...");
         const rawText = await extractTextWithPdfjs(uint8Array, password);
         ocrResult = { rawText, tokensUsed: { input: 0, output: 0 }, ocrMaskedTypes: [] };
         auditParams.extractionMethod = "pdfjs_text_extraction_two_layer_masking";
       } else {
-        // Layer 1: OCR with inline PII filtering (works for non-encrypted PDFs)
-        ocrResult = await extractRawTextFromPDF(pdfBase64, undefined);
+        // No password - use OCR with inline PII filtering
+        ocrResult = await extractRawTextFromPDF(pdfBase64);
       }
       
-      // Layer 2: Local comprehensive masking
+      // PHASE 1B: Apply comprehensive local PII masking
       preMaskingStats = applyComprehensivePIIMasking(
         ocrResult.rawText,
         ocrResult.ocrMaskedTypes,
