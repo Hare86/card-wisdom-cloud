@@ -204,8 +204,11 @@ export default function Upload() {
 
         toast({
           title: "File uploaded",
-          description: `${file.name} uploaded. Click "Parse" to extract data.`,
+          description: `${file.name} uploaded. Checking document...`,
         });
+
+        // Immediately check if PDF is password-protected
+        await checkPasswordProtection(docData as UploadedFile);
 
         fetchUploadedFiles();
       } catch (error) {
@@ -219,6 +222,56 @@ export default function Upload() {
     }
     
     setIsUploading(false);
+  };
+
+  // Check if uploaded PDF is password-protected
+  const checkPasswordProtection = async (file: UploadedFile) => {
+    try {
+      toast({
+        title: "Checking document...",
+        description: "Detecting if password is required...",
+      });
+
+      const { data, error } = await supabase.functions.invoke("check-pdf-password", {
+        body: {
+          filePath: file.file_path,
+          documentId: file.id,
+        },
+      });
+
+      if (error) {
+        console.error("Password check error:", error);
+        // If check fails, show normal success toast
+        toast({
+          title: "File uploaded",
+          description: `${file.file_name} ready. Click "Parse" to extract data.`,
+        });
+        return;
+      }
+
+      if (data?.isPasswordProtected) {
+        // PDF is password-protected - immediately prompt for password
+        setPendingPasswordFile(file);
+        setPasswordDialogOpen(true);
+        toast({
+          title: "Password Required",
+          description: "This PDF is password protected. Please enter the password to continue.",
+        });
+      } else {
+        // PDF is accessible - show success message
+        toast({
+          title: "File uploaded",
+          description: `${file.file_name} ready. Click "Parse" to extract data.`,
+        });
+      }
+    } catch (error) {
+      console.error("Password check error:", error);
+      // On error, allow normal flow
+      toast({
+        title: "File uploaded",
+        description: `${file.file_name} ready. Click "Parse" to extract data.`,
+      });
+    }
   };
 
   const parseDocument = async (file: UploadedFile, providedPassword?: string) => {
