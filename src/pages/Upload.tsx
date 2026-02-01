@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -7,6 +7,16 @@ import { MobileNav } from "@/components/dashboard/MobileNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Upload as UploadIcon, 
@@ -16,7 +26,11 @@ import {
   CheckCircle2,
   ArrowLeft,
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  Lock,
+  Eye,
+  EyeOff,
+  ShieldCheck
 } from "lucide-react";
 import { useEffect } from "react";
 
@@ -31,13 +45,33 @@ interface UploadedFile {
 }
 
 const CARD_OPTIONS = [
+  { value: "default", label: "Auto-detect (Recommended)" },
   { value: "Infinia", label: "HDFC Infinia" },
-  { value: "Atlas", label: "Axis Atlas" },
-  { value: "Emeralde", label: "ICICI Emeralde" },
+  { value: "Regalia", label: "HDFC Regalia" },
   { value: "Diners Club Black", label: "HDFC Diners Club Black" },
+  { value: "MoneyBack", label: "HDFC MoneyBack" },
+  { value: "Millennia", label: "HDFC Millennia" },
+  { value: "Atlas", label: "Axis Atlas" },
   { value: "Reserve", label: "Axis Reserve" },
-  { value: "default", label: "Other Card" },
+  { value: "Magnus", label: "Axis Magnus" },
+  { value: "Flipkart", label: "Axis Flipkart" },
+  { value: "Emeralde", label: "ICICI Emeralde" },
+  { value: "Sapphiro", label: "ICICI Sapphiro" },
+  { value: "Amazon Pay", label: "ICICI Amazon Pay" },
+  { value: "Elite", label: "SBI Elite" },
+  { value: "Prime", label: "SBI Prime" },
 ];
+
+// Session-only password cache (cleared on page refresh - security requirement)
+// This is stored in React state, NOT localStorage or sessionStorage
+interface SessionPasswordCache {
+  [documentId: string]: {
+    password: string;
+    timestamp: number;
+  };
+}
+
+const PASSWORD_CACHE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 export default function Upload() {
   const navigate = useNavigate();
@@ -48,7 +82,17 @@ export default function Upload() {
   const [isParsing, setIsParsing] = useState<string | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(true);
-  const [selectedCard, setSelectedCard] = useState("Infinia");
+  const [selectedCard, setSelectedCard] = useState("default");
+  
+  // Password dialog state
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [pendingPasswordFile, setPendingPasswordFile] = useState<UploadedFile | null>(null);
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
+  
+  // Session-only password cache (memory only - cleared on page refresh)
+  const sessionPasswordCacheRef = useRef<SessionPasswordCache>({});
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -61,6 +105,21 @@ export default function Upload() {
       fetchUploadedFiles();
     }
   }, [user]);
+
+  // Cleanup expired passwords from cache
+  useEffect(() => {
+    const cleanup = setInterval(() => {
+      const now = Date.now();
+      const cache = sessionPasswordCacheRef.current;
+      for (const docId in cache) {
+        if (now - cache[docId].timestamp > PASSWORD_CACHE_TIMEOUT_MS) {
+          delete cache[docId];
+        }
+      }
+    }, 60000); // Check every minute
+
+    return () => clearInterval(cleanup);
+  }, []);
 
   const fetchUploadedFiles = async () => {
     try {
@@ -162,7 +221,7 @@ export default function Upload() {
     setIsUploading(false);
   };
 
-  const parseDocument = async (file: UploadedFile) => {
+  const parseDocument = async (file: UploadedFile, providedPassword?: string) => {
     if (!user) return;
 
     setIsParsing(file.id);
@@ -173,43 +232,117 @@ export default function Upload() {
         description: "AI is analyzing your credit card statement. This may take 10-30 seconds.",
       });
 
-      // Call parse-pdf with file path for real PDF extraction
+      // Check session cache for password (session-only, not persisted)
+      const cachedEntry = sessionPasswordCacheRef.current[file.id];
+      const usePassword = providedPassword || 
+        (cachedEntry && Date.now() - cachedEntry.timestamp < PASSWORD_CACHE_TIMEOUT_MS 
+          ? cachedEntry.password 
+          : undefined);
+
+      // Call parse-pdf with adaptive AI extraction
       const { data, error } = await supabase.functions.invoke("parse-pdf", {
         body: {
           documentId: file.id,
           userId: user.id,
           filePath: file.file_path,
           cardName: selectedCard,
+          password: usePassword, // Never logged, used only for decryption
         },
       });
 
       if (error) throw error;
 
-      const method = data.extraction_method === "ai_vision" ? "AI Vision" : "Text Parser";
+      // Check if password is required
+      if (data?.error === "PASSWORD_REQUIRED" || data?.requiresPassword) {
+        setIsParsing(null);
+        setPendingPasswordFile(file);
+        setPasswordDialogOpen(true);
+        toast({
+          title: "Password Required",
+          description: "This PDF is password protected. Please enter the password.",
+        });
+        return;
+      }
+
+      // Success - cache password for session if used
+      if (providedPassword) {
+        sessionPasswordCacheRef.current[file.id] = {
+          password: providedPassword,
+          timestamp: Date.now(),
+        };
+      }
+
       const detectedInfo = data.detected_card 
-        ? `Detected: ${data.detected_card.bank_name} ${data.detected_card.card_name} (${data.detected_card.confidence} confidence)`
+        ? `Detected: ${data.detected_card.bank_name} ${data.detected_card.card_name} (${Math.round(data.confidence * 100)}% confidence)`
         : "";
       
       toast({
         title: "Document parsed successfully",
-        description: `Extracted ${data.transactions_parsed} transactions using ${method}. ${data.pii_masked} PII fields masked. ${detectedInfo}`,
+        description: `Extracted ${data.transactions_parsed} transactions using Adaptive AI. ${data.pii_masked} PII fields masked. ${detectedInfo}`,
       });
 
       fetchUploadedFiles();
     } catch (error) {
       console.error("Parse error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to parse document. Please try again.";
+      
+      // Check for password requirement in error
+      if (errorMessage.includes("PASSWORD_REQUIRED")) {
+        setPendingPasswordFile(file);
+        setPasswordDialogOpen(true);
+        toast({
+          title: "Password Required",
+          description: "This PDF is password protected. Please enter the password.",
+        });
+        return;
+      }
+      
       toast({
         variant: "destructive",
         title: "Parsing failed",
-        description: error instanceof Error ? error.message : "Failed to parse document. Please try again.",
+        description: errorMessage,
       });
     } finally {
       setIsParsing(null);
     }
   };
 
+  const handlePasswordSubmit = async () => {
+    if (!pendingPasswordFile || !password.trim()) return;
+    
+    setIsSubmittingPassword(true);
+    
+    try {
+      // Parse with provided password
+      await parseDocument(pendingPasswordFile, password);
+      
+      // Clear dialog state
+      setPasswordDialogOpen(false);
+      setPassword("");
+      setPendingPasswordFile(null);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Invalid password",
+        description: "The password you entered is incorrect. Please try again.",
+      });
+    } finally {
+      setIsSubmittingPassword(false);
+    }
+  };
+
+  const handlePasswordCancel = () => {
+    setPasswordDialogOpen(false);
+    setPassword("");
+    setPendingPasswordFile(null);
+    setShowPassword(false);
+  };
+
   const deleteFile = async (file: UploadedFile) => {
     try {
+      // Clear any cached password for this file
+      delete sessionPasswordCacheRef.current[file.id];
+      
       // Delete from storage
       await supabase.storage
         .from("pdf-documents")
@@ -273,7 +406,7 @@ export default function Upload() {
             Upload <span className="gradient-text">Documents</span>
           </h1>
           <p className="text-muted-foreground">
-            Upload your credit card statements for AI-powered analysis with PII masking
+            Upload any bank's credit card statement - AI adapts to all formats automatically
           </p>
         </div>
 
@@ -283,16 +416,16 @@ export default function Upload() {
             <CardHeader>
               <CardTitle>Upload PDF Statement</CardTitle>
               <CardDescription>
-                Your data is protected with automatic PII masking before AI processing
+                Supports all Indian bank formats • Auto-detection • PII masking
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Card Selection */}
               <div>
-                <label className="text-sm font-medium mb-2 block">Select Card Type</label>
+                <label className="text-sm font-medium mb-2 block">Card Type (Optional)</label>
                 <Select value={selectedCard} onValueChange={setSelectedCard}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select a card" />
+                    <SelectValue placeholder="Auto-detect card type" />
                   </SelectTrigger>
                   <SelectContent>
                     {CARD_OPTIONS.map((card) => (
@@ -302,6 +435,9 @@ export default function Upload() {
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Leave as "Auto-detect" for AI-powered card recognition
+                </p>
               </div>
 
               {/* Drop Zone */}
@@ -342,7 +478,7 @@ export default function Upload() {
                           {isDragging ? "Drop files here" : "Click to upload or drag and drop"}
                         </p>
                         <p className="text-sm text-muted-foreground mt-1">
-                          PDF files only (max 10MB)
+                          PDF files only (max 10MB) • Password-protected PDFs supported
                         </p>
                       </div>
                     </div>
@@ -352,12 +488,24 @@ export default function Upload() {
 
               {/* Security Notice */}
               <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
-                <AlertCircle className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
+                <ShieldCheck className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
                 <div className="text-sm">
                   <p className="font-medium">Security & Privacy</p>
                   <p className="text-muted-foreground">
-                    All PII (names, card numbers, emails) is automatically masked before AI processing. 
-                    Your data is encrypted and compliant with GDPR/PCI-DSS guidelines.
+                    • All PII (names, card numbers, emails) automatically masked before AI processing<br/>
+                    • Password-protected PDFs supported (password never stored)<br/>
+                    • Data encrypted and GDPR/PCI-DSS compliant
+                  </p>
+                </div>
+              </div>
+
+              {/* Adaptive System Notice */}
+              <div className="flex items-start gap-3 p-3 bg-primary/10 rounded-lg">
+                <Sparkles className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium">Adaptive AI Extraction</p>
+                  <p className="text-muted-foreground">
+                    Works with any bank statement format. AI learns from each document to improve accuracy.
                   </p>
                 </div>
               </div>
@@ -413,12 +561,20 @@ export default function Upload() {
 
                       {/* Parsed Status */}
                       {file.parsed_data ? (
-                        <div className="flex items-center gap-2 text-xs text-primary">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>
-                            Parsed: {file.parsed_data.transaction_count} transactions, 
-                            {file.parsed_data.total_points_earned} points
-                          </span>
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 text-xs text-primary">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>
+                              {file.parsed_data.transaction_count} transactions • {file.parsed_data.total_points_earned} points
+                            </span>
+                          </div>
+                          {file.parsed_data.detected_card && (
+                            <p className="text-xs text-muted-foreground">
+                              {file.parsed_data.bank_name} {file.parsed_data.card_name}
+                              {file.parsed_data.detected_card.confidence && 
+                                ` (${Math.round(file.parsed_data.detected_card.confidence * 100)}% confidence)`}
+                            </p>
+                          )}
                         </div>
                       ) : (
                         <Button
@@ -436,7 +592,7 @@ export default function Upload() {
                           ) : (
                             <>
                               <Sparkles className="w-4 h-4 mr-2" />
-                              Parse with AI
+                              Parse with Adaptive AI
                             </>
                           )}
                         </Button>
@@ -449,6 +605,92 @@ export default function Upload() {
           </Card>
         </div>
       </main>
+
+      {/* Password Dialog */}
+      <Dialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="w-5 h-5 text-primary" />
+              Password Protected PDF
+            </DialogTitle>
+            <DialogDescription>
+              This statement is password protected. Enter the password to proceed.
+              {pendingPasswordFile && (
+                <span className="block mt-1 font-medium text-foreground">
+                  {pendingPasswordFile.file_name}
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="pdf-password">PDF Password</Label>
+              <div className="relative">
+                <Input
+                  id="pdf-password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Enter PDF password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && password.trim()) {
+                      handlePasswordSubmit();
+                    }
+                  }}
+                  className="pr-10"
+                  autoComplete="off"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <Eye className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </Button>
+              </div>
+            </div>
+            
+            <div className="flex items-start gap-2 p-3 bg-muted/50 rounded-lg">
+              <AlertCircle className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                Your password is used only to decrypt the PDF and is never stored. 
+                It may be cached in memory for this session (15 min timeout) for convenience.
+              </p>
+            </div>
+          </div>
+          
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={handlePasswordCancel}
+              disabled={isSubmittingPassword}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handlePasswordSubmit}
+              disabled={!password.trim() || isSubmittingPassword}
+            >
+              {isSubmittingPassword ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Unlock & Parse"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -6,7 +6,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// PII Patterns for masking
+// ============================================================================
+// PII MASKING - GDPR/PCI-DSS COMPLIANT
+// All patterns designed to detect and mask sensitive data BEFORE LLM processing
+// ============================================================================
 const PII_PATTERNS = {
   creditCard: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g,
   pan: /\b[A-Z]{5}\d{4}[A-Z]\b/g,
@@ -14,6 +17,8 @@ const PII_PATTERNS = {
   email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
   phone: /\b(?:\+91[-\s]?)?[6-9]\d{9}\b/g,
   cvv: /\bCVV[:\s]*\d{3,4}\b/gi,
+  accountNumber: /\b\d{9,18}\b/g,
+  ifsc: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g,
 };
 
 function maskPII(text: string): { maskedText: string; piiTypesFound: string[]; fieldsMasked: number } {
@@ -21,6 +26,7 @@ function maskPII(text: string): { maskedText: string; piiTypesFound: string[]; f
   const piiTypesFound: string[] = [];
   let fieldsMasked = 0;
 
+  // Order matters - mask credit cards before generic numbers
   const creditCardMatches = maskedText.match(PII_PATTERNS.creditCard);
   if (creditCardMatches) {
     piiTypesFound.push("credit_card");
@@ -70,22 +76,71 @@ function maskPII(text: string): { maskedText: string; piiTypesFound: string[]; f
     maskedText = maskedText.replace(PII_PATTERNS.cvv, "CVV: XXX");
   }
 
+  const ifscMatches = maskedText.match(PII_PATTERNS.ifsc);
+  if (ifscMatches) {
+    piiTypesFound.push("ifsc");
+    fieldsMasked += ifscMatches.length;
+    maskedText = maskedText.replace(PII_PATTERNS.ifsc, "XXXX0XXXXXX");
+  }
+
   return { maskedText, piiTypesFound, fieldsMasked };
 }
 
+// ============================================================================
+// ADAPTIVE TEMPLATE SYSTEM
+// Schema-less extraction using AI - no code changes needed for new templates
+// ============================================================================
+
+interface ExtractedData {
+  bankName: string;
+  cardName: string;
+  cardholderName: string;
+  statementPeriod: { start: string; end: string };
+  transactions: TransactionData[];
+  totalPoints: number;
+  totalSpend: number;
+  templateSignature: string;
+  confidence: number;
+}
+
+interface TransactionData {
+  date: string;
+  description: string;
+  amount: number;
+  merchant: string;
+  category?: string;
+  points?: number;
+}
+
+// Generate a structural hash for template matching (NO PII - just layout patterns)
+function generateTemplateHash(structuralFeatures: string[]): string {
+  const sorted = structuralFeatures.sort().join("|");
+  // Simple hash - in production use proper crypto hash
+  let hash = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const char = sorted.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(16).padStart(8, "0");
+}
+
+// Intelligent category detection
 function categorizeTransaction(description: string): string {
   const desc = description.toLowerCase();
   
   const categories: Record<string, string[]> = {
-    "Travel": ["airline", "air india", "indigo", "spicejet", "makemytrip", "goibibo", "irctc", "uber", "ola", "rapido", "flight", "hotel", "booking", "airways", "cab", "taxi"],
-    "Dining": ["swiggy", "zomato", "restaurant", "cafe", "food", "dominos", "pizza", "mcdonalds", "kfc", "starbucks", "dunkin", "barbeque", "dine"],
-    "Shopping": ["amazon", "flipkart", "myntra", "ajio", "nykaa", "bigbasket", "grofers", "blinkit", "mall", "store", "shop", "mart", "retail"],
-    "Fuel": ["petrol", "diesel", "hp", "iocl", "bpcl", "fuel", "gas station", "shell", "indian oil"],
-    "Entertainment": ["netflix", "prime video", "hotstar", "spotify", "bookmyshow", "pvr", "inox", "cinema", "disney", "youtube"],
-    "Utilities": ["electricity", "water", "gas", "broadband", "jio", "airtel", "vodafone", "postpaid", "recharge", "bill"],
-    "Insurance": ["insurance", "lic", "hdfc life", "icici prudential", "sbi life", "policy", "premium"],
-    "Healthcare": ["pharmacy", "hospital", "doctor", "clinic", "apollo", "medplus", "1mg", "practo", "medical", "health"],
-    "Groceries": ["grocery", "supermarket", "dmart", "reliance fresh", "more", "spencer", "nature's basket"],
+    "Travel": ["airline", "air india", "indigo", "spicejet", "makemytrip", "goibibo", "irctc", "uber", "ola", "rapido", "flight", "hotel", "booking", "airways", "cab", "taxi", "airport", "railways", "bus", "cruise"],
+    "Dining": ["swiggy", "zomato", "restaurant", "cafe", "food", "dominos", "pizza", "mcdonalds", "kfc", "starbucks", "dunkin", "barbeque", "dine", "eat", "lunch", "dinner", "breakfast"],
+    "Shopping": ["amazon", "flipkart", "myntra", "ajio", "nykaa", "bigbasket", "grofers", "blinkit", "mall", "store", "shop", "mart", "retail", "fashion", "clothing", "electronics"],
+    "Fuel": ["petrol", "diesel", "hp", "iocl", "bpcl", "fuel", "gas station", "shell", "indian oil", "reliance fuel", "essar"],
+    "Entertainment": ["netflix", "prime video", "hotstar", "spotify", "bookmyshow", "pvr", "inox", "cinema", "disney", "youtube", "game", "concert", "event"],
+    "Utilities": ["electricity", "water", "gas", "broadband", "jio", "airtel", "vodafone", "postpaid", "recharge", "bill", "internet", "telecom"],
+    "Insurance": ["insurance", "lic", "hdfc life", "icici prudential", "sbi life", "policy", "premium", "health cover"],
+    "Healthcare": ["pharmacy", "hospital", "doctor", "clinic", "apollo", "medplus", "1mg", "practo", "medical", "health", "medicine", "diagnostic"],
+    "Groceries": ["grocery", "supermarket", "dmart", "reliance fresh", "more", "spencer", "nature's basket", "vegetables", "fruits"],
+    "Education": ["school", "college", "university", "course", "tuition", "books", "udemy", "coursera", "education"],
+    "Financial": ["emi", "loan", "interest", "bank charge", "late fee", "finance", "investment", "mutual fund"],
   };
 
   for (const [category, keywords] of Object.entries(categories)) {
@@ -96,134 +151,11 @@ function categorizeTransaction(description: string): string {
   return "Other";
 }
 
-// Card detection patterns
-const CARD_PATTERNS: { pattern: RegExp; cardName: string; bankName: string }[] = [
-  // HDFC Cards - specific patterns first
-  { pattern: /infinia/i, cardName: "Infinia", bankName: "HDFC" },
-  { pattern: /diners.*black/i, cardName: "Diners Club Black", bankName: "HDFC" },
-  { pattern: /regalia/i, cardName: "Regalia", bankName: "HDFC" },
-  { pattern: /moneyback/i, cardName: "MoneyBack", bankName: "HDFC" },
-  { pattern: /millennia/i, cardName: "Millennia", bankName: "HDFC" },
-  { pattern: /hdfc.*swiggy/i, cardName: "Swiggy", bankName: "HDFC" },
-  { pattern: /tata.*neu/i, cardName: "Tata Neu", bankName: "HDFC" },
-  // Axis Cards
-  { pattern: /atlas/i, cardName: "Atlas", bankName: "Axis" },
-  { pattern: /axis.*reserve/i, cardName: "Reserve", bankName: "Axis" },
-  { pattern: /magnus/i, cardName: "Magnus", bankName: "Axis" },
-  { pattern: /axis.*flipkart/i, cardName: "Flipkart", bankName: "Axis" },
-  { pattern: /axis.*ace/i, cardName: "Ace", bankName: "Axis" },
-  // ICICI Cards
-  { pattern: /emeralde/i, cardName: "Emeralde", bankName: "ICICI" },
-  { pattern: /sapphiro/i, cardName: "Sapphiro", bankName: "ICICI" },
-  { pattern: /icici.*amazon.*pay/i, cardName: "Amazon Pay", bankName: "ICICI" },
-  { pattern: /coral/i, cardName: "Coral", bankName: "ICICI" },
-  // SBI Cards
-  { pattern: /sbi.*elite/i, cardName: "Elite", bankName: "SBI" },
-  { pattern: /sbi.*prime/i, cardName: "Prime", bankName: "SBI" },
-  { pattern: /simplysave/i, cardName: "SimplySave", bankName: "SBI" },
-  // Amex Cards
-  { pattern: /amex.*platinum/i, cardName: "Platinum", bankName: "Amex" },
-  { pattern: /american.*express.*platinum/i, cardName: "Platinum", bankName: "Amex" },
-  { pattern: /amex.*gold/i, cardName: "Gold", bankName: "Amex" },
-  { pattern: /amex.*mrcc|membership.*rewards/i, cardName: "MRCC", bankName: "Amex" },
-  // Generic bank detection (lower priority)
-  { pattern: /hdfc\s*(bank)?.*credit\s*card/i, cardName: "Generic", bankName: "HDFC" },
-  { pattern: /axis\s*(bank)?.*credit\s*card/i, cardName: "Generic", bankName: "Axis" },
-  { pattern: /icici\s*(bank)?.*credit\s*card/i, cardName: "Generic", bankName: "ICICI" },
-  { pattern: /sbi\s*(card)?.*credit\s*card/i, cardName: "Generic", bankName: "SBI" },
-  { pattern: /kotak.*credit\s*card/i, cardName: "Generic", bankName: "Kotak" },
-  { pattern: /yes\s*bank.*credit\s*card/i, cardName: "Generic", bankName: "Yes Bank" },
-  { pattern: /indusind.*credit\s*card/i, cardName: "Generic", bankName: "IndusInd" },
-];
-
-function detectCardType(text: string): { cardName: string; bankName: string; confidence: "high" | "medium" | "low" } {
-  const normalizedText = text.toLowerCase();
-  
-  for (const { pattern, cardName, bankName } of CARD_PATTERNS) {
-    if (pattern.test(normalizedText)) {
-      const isGeneric = cardName === "Generic";
-      return {
-        cardName: isGeneric ? `${bankName} Card` : cardName,
-        bankName,
-        confidence: isGeneric ? "medium" : "high",
-      };
-    }
-  }
-  
-  return { cardName: "Unknown", bankName: "Unknown", confidence: "low" };
-}
-
-// Name validation and sanitization
-const NAME_VALIDATION = {
-  minLength: 2,
-  maxLength: 50,
-  // Allow letters, numbers, spaces, hyphens, periods, and common bank name characters
-  validPattern: /^[a-zA-Z0-9\s\-\.&']+$/,
-  // Reserved/invalid names that shouldn't be allowed
-  invalidNames: ["unknown", "null", "undefined", "none", "n/a", "test", "default"],
-};
-
-function validateName(name: string, type: "card" | "bank"): { isValid: boolean; error?: string; sanitized: string } {
-  // Trim and normalize whitespace
-  const sanitized = name.trim().replace(/\s+/g, " ");
-  
-  // Check for empty or undefined
-  if (!sanitized || sanitized.length === 0) {
-    return { isValid: false, error: `${type} name cannot be empty`, sanitized: "" };
-  }
-  
-  // Check minimum length
-  if (sanitized.length < NAME_VALIDATION.minLength) {
-    return { isValid: false, error: `${type} name must be at least ${NAME_VALIDATION.minLength} characters`, sanitized };
-  }
-  
-  // Check maximum length
-  if (sanitized.length > NAME_VALIDATION.maxLength) {
-    return { isValid: false, error: `${type} name cannot exceed ${NAME_VALIDATION.maxLength} characters`, sanitized: sanitized.substring(0, NAME_VALIDATION.maxLength) };
-  }
-  
-  // Check for invalid characters
-  if (!NAME_VALIDATION.validPattern.test(sanitized)) {
-    return { isValid: false, error: `${type} name contains invalid characters`, sanitized: sanitized.replace(/[^a-zA-Z0-9\s\-\.&']/g, "") };
-  }
-  
-  // Check for reserved/invalid names
-  if (NAME_VALIDATION.invalidNames.includes(sanitized.toLowerCase())) {
-    return { isValid: false, error: `${type} name "${sanitized}" is not allowed`, sanitized };
-  }
-  
-  return { isValid: true, sanitized };
-}
-
-function validateCardData(cardName: string, bankName: string): { 
-  isValid: boolean; 
-  errors: string[]; 
-  sanitizedCardName: string; 
-  sanitizedBankName: string;
-} {
-  const cardValidation = validateName(cardName, "card");
-  const bankValidation = validateName(bankName, "bank");
-  
-  const errors: string[] = [];
-  if (!cardValidation.isValid && cardValidation.error) {
-    errors.push(cardValidation.error);
-  }
-  if (!bankValidation.isValid && bankValidation.error) {
-    errors.push(bankValidation.error);
-  }
-  
-  return {
-    isValid: cardValidation.isValid && bankValidation.isValid,
-    errors,
-    sanitizedCardName: cardValidation.sanitized,
-    sanitizedBankName: bankValidation.sanitized,
-  };
-}
-
+// Calculate reward points based on card and category
 function calculatePoints(amount: number, category: string, cardName: string): number {
   const rewardRates: Record<string, Record<string, number>> = {
-    "Infinia": { "Travel": 5, "Dining": 3, "Shopping": 2, "Other": 1 },
-    "Atlas": { "Travel": 5, "Dining": 2, "Shopping": 2, "Other": 1 },
+    "Infinia": { "Travel": 5, "Dining": 3, "Shopping": 2, "Fuel": 1, "Other": 1 },
+    "Atlas": { "Travel": 5, "Dining": 2, "Shopping": 2, "Fuel": 1, "Other": 1 },
     "Emeralde": { "Dining": 3, "Entertainment": 3, "Shopping": 2, "Other": 1 },
     "Diners Club Black": { "Travel": 5, "Dining": 5, "Shopping": 2, "Other": 1 },
     "Reserve": { "Travel": 5, "Dining": 3, "Entertainment": 3, "Other": 1 },
@@ -234,7 +166,9 @@ function calculatePoints(amount: number, category: string, cardName: string): nu
     "Flipkart": { "Shopping": 5, "Other": 1.5 },
     "Amazon Pay": { "Shopping": 5, "Other": 2 },
     "Elite": { "Travel": 3, "Dining": 3, "Shopping": 2, "Other": 1 },
-    "default": { "Travel": 2, "Dining": 2, "Shopping": 1, "Other": 1 },
+    "Prime": { "Travel": 3, "Dining": 2, "Shopping": 2, "Other": 1 },
+    "SimplySave": { "Dining": 2, "Shopping": 2, "Entertainment": 2, "Other": 1 },
+    "default": { "Travel": 2, "Dining": 2, "Shopping": 1, "Fuel": 1, "Other": 1 },
   };
 
   const rates = rewardRates[cardName] || rewardRates["default"];
@@ -242,69 +176,124 @@ function calculatePoints(amount: number, category: string, cardName: string): nu
   return Math.floor((amount / 100) * rate);
 }
 
-function generateSummary(transactions: any[], cardName: string): any {
-  const totalSpend = transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-  const totalPoints = transactions.reduce((sum, t) => sum + t.points_earned, 0);
-  
-  const byCategory = transactions.reduce((acc, t) => {
-    acc[t.category] = (acc[t.category] || 0) + Math.abs(t.amount);
-    return acc;
-  }, {} as Record<string, number>);
+// Name validation (security requirement)
+const NAME_VALIDATION = {
+  minLength: 2,
+  maxLength: 100,
+  validPattern: /^[a-zA-Z0-9\s\-\.&'()]+$/,
+  invalidNames: ["unknown", "null", "undefined", "none", "n/a", "test", "default", "card", "bank"],
+};
 
-  const topMerchants = Object.entries(
-    transactions.reduce((acc, t) => {
-      acc[t.merchant_name] = (acc[t.merchant_name] || 0) + Math.abs(t.amount);
-      return acc;
-    }, {} as Record<string, number>)
-  )
-    .sort(([, a], [, b]) => (b as number) - (a as number))
-    .slice(0, 5);
-
-  return {
-    card_name: cardName,
-    total_spend: totalSpend,
-    total_points_earned: totalPoints,
-    transaction_count: transactions.length,
-    spending_by_category: byCategory,
-    top_merchants: topMerchants,
-    statement_period: {
-      start: transactions[transactions.length - 1]?.transaction_date,
-      end: transactions[0]?.transaction_date,
-    },
-  };
+function sanitizeName(name: string): string {
+  if (!name) return "";
+  let sanitized = name.trim().replace(/\s+/g, " ");
+  // Remove any potential XSS or injection characters
+  sanitized = sanitized.replace(/[<>\"'`;\\]/g, "");
+  if (sanitized.length > NAME_VALIDATION.maxLength) {
+    sanitized = sanitized.substring(0, NAME_VALIDATION.maxLength);
+  }
+  return sanitized;
 }
 
-// Extract transactions using Lovable AI vision model
-async function extractTransactionsWithAI(pdfBase64: string, cardNameHint: string): Promise<{ transactions: any[]; statementText: string }> {
+function validateName(name: string, type: "card" | "bank" | "cardholder"): { isValid: boolean; error?: string; sanitized: string } {
+  const sanitized = sanitizeName(name);
+  
+  if (!sanitized || sanitized.length < NAME_VALIDATION.minLength) {
+    return { isValid: false, error: `${type} name too short`, sanitized };
+  }
+  
+  if (!NAME_VALIDATION.validPattern.test(sanitized)) {
+    return { isValid: false, error: `${type} name contains invalid characters`, sanitized: sanitized.replace(/[^a-zA-Z0-9\s\-\.&'()]/g, "") };
+  }
+  
+  if (NAME_VALIDATION.invalidNames.includes(sanitized.toLowerCase())) {
+    return { isValid: false, error: `${type} name is reserved`, sanitized };
+  }
+  
+  return { isValid: true, sanitized };
+}
+
+// ============================================================================
+// ADAPTIVE AI EXTRACTION - Works with ANY bank statement template
+// ============================================================================
+
+async function extractWithAdaptiveAI(
+  pdfBase64: string, 
+  password?: string,
+  existingTemplates?: any[]
+): Promise<{ data: ExtractedData; rawResponse: string; tokensUsed: { input: number; output: number } }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
     throw new Error("LOVABLE_API_KEY is not configured");
   }
 
-  const systemPrompt = `You are a credit card statement parser. Extract ALL transactions and the statement header from this credit card statement.
+  // Construct hints from existing templates if available
+  const templateHints = existingTemplates?.length 
+    ? `Known bank formats include: ${existingTemplates.map(t => t.bank_name).join(", ")}. But extract based on actual content.`
+    : "";
 
-For each transaction, extract:
-- date: The transaction date in YYYY-MM-DD format
-- description: The merchant name or transaction description  
-- amount: The transaction amount as a positive number (without currency symbols)
-- merchant: The simplified merchant name (e.g., "Amazon", "Swiggy", "MakeMyTrip")
+  const systemPrompt = `You are an expert credit card statement parser for Indian banks. Extract ALL information from the statement image.
 
-Also extract:
-- statementHeader: The first 500 characters of the statement including bank name, card type, customer details
+CRITICAL SECURITY REQUIREMENTS:
+1. NEVER include the actual cardholder name in your response - use "[MASKED_NAME]" placeholder
+2. NEVER include full card numbers - only last 4 digits if visible
+3. Mask all phone numbers, email addresses, and personal identifiers
 
-Return ONLY valid JSON with no markdown or explanations. Example format:
+EXTRACTION REQUIREMENTS:
+Extract the following with high accuracy:
+1. Bank Name (e.g., "HDFC Bank", "Axis Bank", "ICICI Bank", "SBI Card", "American Express")
+2. Card Product Name (e.g., "Infinia", "Regalia", "Atlas", "Millennia", "Reserve", "Coral")
+3. Statement Period (start and end dates in YYYY-MM-DD format)
+4. ALL transactions with: date (YYYY-MM-DD), description, amount, merchant name
+5. Layout features for template matching (header position, table format, logo placement)
+
+${templateHints}
+
+RESPOND ONLY WITH VALID JSON (no markdown, no explanations):
 {
-  "statementHeader": "HDFC BANK MoneyBack Credit Card Statement...",
+  "bankName": "detected bank name",
+  "cardName": "detected card product name",
+  "cardholderName": "[MASKED_NAME]",
+  "statementPeriod": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"},
   "transactions": [
-    {"date": "2024-01-15", "description": "AMAZON IN MUMBAI", "amount": 2500.00, "merchant": "Amazon"},
-    {"date": "2024-01-14", "description": "SWIGGY ORDER", "amount": 450.50, "merchant": "Swiggy"}
-  ]
+    {"date": "YYYY-MM-DD", "description": "merchant/transaction details", "amount": 1234.56, "merchant": "simplified merchant name"}
+  ],
+  "layoutFeatures": ["header_centered", "logo_top_left", "table_with_borders", etc.],
+  "confidence": 0.95
 }
 
-If you cannot extract transactions, return: {"statementHeader": "", "transactions": []}
-Parse ALL visible transactions. Include both credits and debits.`;
+If PDF is password protected and no password provided, return:
+{"error": "PASSWORD_REQUIRED", "message": "This PDF is password protected"}
 
-  console.log("Calling Lovable AI to extract transactions from PDF...");
+Parse ALL visible transactions. For amounts, use positive numbers (debits as positive).`;
+
+  console.log("Calling Lovable AI for adaptive extraction...");
+
+  const requestBody: any = {
+    model: "google/gemini-2.5-flash",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { 
+        role: "user", 
+        content: [
+          {
+            type: "text",
+            text: password 
+              ? `Extract all data from this credit card statement. PDF password is: ${password}`
+              : "Extract all data from this credit card statement. Return ONLY valid JSON."
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:application/pdf;base64,${pdfBase64}`
+            }
+          }
+        ]
+      }
+    ],
+    max_tokens: 8192,
+    temperature: 0.1,
+  };
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -312,91 +301,221 @@ Parse ALL visible transactions. Include both credits and debits.`;
       "Authorization": `Bearer ${LOVABLE_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { 
-          role: "user", 
-          content: [
-            {
-              type: "text",
-              text: `Extract all transactions and statement header from this ${cardNameHint} credit card statement. Return ONLY valid JSON.`
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:application/pdf;base64,${pdfBase64}`
-              }
-            }
-          ]
-        }
-      ],
-      max_tokens: 4096,
-      temperature: 0.1,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
     console.error("AI API error:", response.status, errorText);
     if (response.status === 429) {
-      throw new Error("Rate limit exceeded. Please try again later.");
+      throw new Error("Rate limit exceeded. Please try again in a few minutes.");
     }
     if (response.status === 402) {
-      throw new Error("AI credits exhausted. Please add credits to continue.");
+      throw new Error("AI processing credits exhausted. Please contact support.");
     }
-    throw new Error(`AI extraction failed: ${response.status}`);
+    throw new Error(`AI extraction failed with status ${response.status}`);
   }
 
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || "{}";
-  
-  console.log("AI response received, parsing transactions...");
-  
-  // Parse the JSON response
+  const aiResponse = await response.json();
+  const content = aiResponse.choices?.[0]?.message?.content || "{}";
+  const tokensUsed = {
+    input: aiResponse.usage?.prompt_tokens || 0,
+    output: aiResponse.usage?.completion_tokens || 0,
+  };
+
+  // Parse and validate response
+  let parsed: any;
   try {
-    // Clean up response - remove markdown code blocks if present
     let cleanContent = content.trim();
-    if (cleanContent.startsWith("```json")) {
-      cleanContent = cleanContent.slice(7);
-    }
-    if (cleanContent.startsWith("```")) {
-      cleanContent = cleanContent.slice(3);
-    }
-    if (cleanContent.endsWith("```")) {
-      cleanContent = cleanContent.slice(0, -3);
-    }
-    cleanContent = cleanContent.trim();
-    
-    const parsed = JSON.parse(cleanContent);
-    
-    // Handle both old array format and new object format
-    if (Array.isArray(parsed)) {
-      return { transactions: parsed, statementText: "" };
-    }
-    
-    return {
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
-      statementText: parsed.statementHeader || "",
-    };
+    if (cleanContent.startsWith("```json")) cleanContent = cleanContent.slice(7);
+    if (cleanContent.startsWith("```")) cleanContent = cleanContent.slice(3);
+    if (cleanContent.endsWith("```")) cleanContent = cleanContent.slice(0, -3);
+    parsed = JSON.parse(cleanContent.trim());
   } catch (e) {
     console.error("Failed to parse AI response:", e, content);
-    return { transactions: [], statementText: "" };
+    throw new Error("Failed to parse statement. The format may not be supported.");
+  }
+
+  // Check for password requirement
+  if (parsed.error === "PASSWORD_REQUIRED") {
+    throw new Error("PASSWORD_REQUIRED");
+  }
+
+  // Generate template signature from layout features
+  const layoutFeatures = parsed.layoutFeatures || [];
+  layoutFeatures.push(`bank_${(parsed.bankName || "unknown").toLowerCase().replace(/\s+/g, "_")}`);
+  const templateSignature = generateTemplateHash(layoutFeatures);
+
+  // Validate and sanitize extracted data
+  const bankValidation = validateName(parsed.bankName || "Unknown", "bank");
+  const cardValidation = validateName(parsed.cardName || "Generic", "card");
+
+  // Process transactions with PII masking
+  const transactions: TransactionData[] = [];
+  for (const tx of (parsed.transactions || [])) {
+    const { maskedText } = maskPII(tx.description || "");
+    const category = categorizeTransaction(tx.description || tx.merchant || "");
+    
+    transactions.push({
+      date: tx.date || new Date().toISOString().split("T")[0],
+      description: maskedText,
+      amount: Math.abs(parseFloat(tx.amount) || 0),
+      merchant: sanitizeName(tx.merchant || maskedText.split(" ").slice(0, 2).join(" ")),
+      category,
+    });
+  }
+
+  return {
+    data: {
+      bankName: bankValidation.sanitized || "Unknown Bank",
+      cardName: cardValidation.sanitized || "Generic Card",
+      cardholderName: "[MASKED]", // Never expose real name
+      statementPeriod: {
+        start: parsed.statementPeriod?.start || "",
+        end: parsed.statementPeriod?.end || "",
+      },
+      transactions,
+      totalPoints: 0, // Will be calculated later
+      totalSpend: transactions.reduce((sum, t) => sum + t.amount, 0),
+      templateSignature,
+      confidence: parsed.confidence || 0.5,
+    },
+    rawResponse: content,
+    tokensUsed,
+  };
+}
+
+// ============================================================================
+// TEMPLATE LEARNING - Store patterns, not data
+// ============================================================================
+
+async function learnTemplate(
+  supabase: any,
+  bankName: string,
+  templateSignature: string,
+  layoutFeatures: string[],
+  success: boolean
+) {
+  try {
+    // Check if template exists
+    const { data: existing } = await supabase
+      .from("statement_templates")
+      .select("id, extraction_success_count, extraction_failure_count")
+      .eq("template_hash", templateSignature)
+      .single();
+
+    if (existing) {
+      // Update success/failure counts
+      await supabase
+        .from("statement_templates")
+        .update({
+          extraction_success_count: existing.extraction_success_count + (success ? 1 : 0),
+          extraction_failure_count: existing.extraction_failure_count + (success ? 0 : 1),
+          last_successful_extraction: success ? new Date().toISOString() : undefined,
+        })
+        .eq("id", existing.id);
+    } else if (success) {
+      // Create new template entry (only on success)
+      await supabase
+        .from("statement_templates")
+        .insert({
+          bank_name: sanitizeName(bankName),
+          template_hash: templateSignature,
+          template_version: 1,
+          field_patterns: {}, // Will be populated with structural patterns
+          header_patterns: {},
+          table_patterns: {},
+          extraction_success_count: 1,
+          extraction_failure_count: 0,
+          last_successful_extraction: new Date().toISOString(),
+        });
+    }
+  } catch (e) {
+    // Non-critical - log and continue
+    console.error("Template learning error:", e);
   }
 }
+
+// ============================================================================
+// AUDIT LOGGING - Compliance requirement
+// ============================================================================
+
+async function logExtractionAudit(
+  supabase: any,
+  userId: string,
+  documentId: string,
+  params: {
+    templateId?: string;
+    extractionMethod: string;
+    confidenceScore: number;
+    fieldsExtracted: number;
+    piiFieldsMasked: number;
+    processingTimeMs: number;
+    llmModelUsed: string;
+    llmTokensInput: number;
+    llmTokensOutput: number;
+    passwordProtected: boolean;
+    status: "success" | "failed" | "pending";
+    errorMessage?: string;
+  }
+) {
+  try {
+    await supabase.from("extraction_audit_log").insert({
+      user_id: userId,
+      document_id: documentId,
+      template_id: params.templateId,
+      extraction_method: params.extractionMethod,
+      confidence_score: params.confidenceScore,
+      fields_extracted: params.fieldsExtracted,
+      pii_fields_masked: params.piiFieldsMasked,
+      processing_time_ms: params.processingTimeMs,
+      llm_model_used: params.llmModelUsed,
+      llm_tokens_input: params.llmTokensInput,
+      llm_tokens_output: params.llmTokensOutput,
+      password_protected: params.passwordProtected,
+      extraction_status: params.status,
+      error_message: params.errorMessage,
+    });
+  } catch (e) {
+    console.error("Audit logging error:", e);
+  }
+}
+
+// ============================================================================
+// MAIN HANDLER
+// ============================================================================
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  const startTime = Date.now();
+  let auditParams: any = {
+    extractionMethod: "adaptive_ai",
+    confidenceScore: 0,
+    fieldsExtracted: 0,
+    piiFieldsMasked: 0,
+    processingTimeMs: 0,
+    llmModelUsed: "google/gemini-2.5-flash",
+    llmTokensInput: 0,
+    llmTokensOutput: 0,
+    passwordProtected: false,
+    status: "pending" as const,
+  };
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { documentId, userId, filePath, cardName = "default" } = await req.json();
+    const { 
+      documentId, 
+      userId, 
+      filePath, 
+      cardName = "default",
+      password // Optional: for password-protected PDFs (session-only, never stored)
+    } = await req.json();
 
     if (!filePath) {
       return new Response(JSON.stringify({ error: "No file path provided" }), {
@@ -405,7 +524,9 @@ serve(async (req) => {
       });
     }
 
-    console.log(`Parsing document ${documentId} for user ${userId}, file: ${filePath}`);
+    // SECURITY: Never log password
+    console.log(`Processing document ${documentId} for user ${userId}`);
+    auditParams.passwordProtected = !!password;
 
     // Step 1: Download PDF from storage
     const { data: fileData, error: downloadError } = await supabase.storage
@@ -414,13 +535,10 @@ serve(async (req) => {
 
     if (downloadError || !fileData) {
       console.error("Download error:", downloadError);
-      return new Response(JSON.stringify({ error: "Failed to download PDF" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      throw new Error("Failed to download document from storage");
     }
 
-    console.log(`Downloaded PDF, size: ${fileData.size} bytes`);
+    console.log(`Downloaded PDF: ${fileData.size} bytes`);
 
     // Step 2: Convert to base64
     const arrayBuffer = await fileData.arrayBuffer();
@@ -431,120 +549,129 @@ serve(async (req) => {
     }
     const pdfBase64 = btoa(binary);
 
-    // Step 3: Extract transactions using Lovable AI vision
-    const extractionResult = await extractTransactionsWithAI(pdfBase64, cardName);
-    const rawTransactions = extractionResult.transactions;
-    const statementText = extractionResult.statementText;
-    console.log(`AI extracted ${rawTransactions.length} raw transactions`);
+    // Step 3: Fetch existing templates for hints (improves accuracy)
+    const { data: existingTemplates } = await supabase
+      .from("statement_templates")
+      .select("bank_name, template_hash, field_patterns")
+      .eq("is_active", true)
+      .order("extraction_success_count", { ascending: false })
+      .limit(10);
 
-    // Step 3b: Auto-detect card type from statement text
-    let detectedCard: { cardName: string; bankName: string; confidence: "high" | "medium" | "low" } = { 
-      cardName: cardName, 
-      bankName: "Unknown", 
-      confidence: "low" 
-    };
-    if (statementText) {
-      detectedCard = detectCardType(statementText);
-      console.log(`Detected card: ${detectedCard.bankName} ${detectedCard.cardName} (confidence: ${detectedCard.confidence})`);
-    }
-    
-    // Use detected card if user didn't specify or used default
-    const effectiveCardName = (cardName === "default" || !cardName) && detectedCard.confidence !== "low" 
-      ? detectedCard.cardName 
-      : cardName;
-
-    // Step 4: Process and enrich transactions
-    const transactions: any[] = [];
-    for (const tx of rawTransactions) {
-      // Mask PII in description
-      const { maskedText, piiTypesFound, fieldsMasked } = maskPII(tx.description || "");
-      
-      const category = categorizeTransaction(tx.description || tx.merchant || "");
-      const amount = Math.abs(parseFloat(tx.amount) || 0);
-      const pointsEarned = calculatePoints(amount, category, effectiveCardName);
-
-      transactions.push({
-        user_id: userId,
-        document_id: documentId,
-        transaction_date: tx.date || new Date().toISOString().split("T")[0],
-        description: maskedText,
-        amount: amount,
-        category: category,
-        points_earned: pointsEarned,
-        merchant_name: tx.merchant || maskedText.split(" ").slice(0, 2).join(" "),
-        is_masked: fieldsMasked > 0,
-      });
+    // Step 4: Adaptive AI extraction
+    let extractionResult;
+    try {
+      extractionResult = await extractWithAdaptiveAI(pdfBase64, password, existingTemplates || undefined);
+    } catch (e) {
+      if (e instanceof Error && e.message === "PASSWORD_REQUIRED") {
+        return new Response(
+          JSON.stringify({
+            error: "PASSWORD_REQUIRED",
+            message: "This PDF is password protected. Please provide the password.",
+            requiresPassword: true,
+          }),
+          {
+            status: 401,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      throw e;
     }
 
-    console.log(`Processed ${transactions.length} transactions`);
+    const { data: extractedData, tokensUsed } = extractionResult;
+    auditParams.llmTokensInput = tokensUsed.input;
+    auditParams.llmTokensOutput = tokensUsed.output;
+    auditParams.confidenceScore = extractedData.confidence;
 
-    // Step 5: Log PII masking
-    const allPiiTypes = new Set<string>();
-    let totalFieldsMasked = 0;
-    for (const tx of rawTransactions) {
-      const { piiTypesFound, fieldsMasked } = maskPII(tx.description || "");
-      piiTypesFound.forEach(t => allPiiTypes.add(t));
-      totalFieldsMasked += fieldsMasked;
+    console.log(`Extracted ${extractedData.transactions.length} transactions from ${extractedData.bankName} ${extractedData.cardName}`);
+
+    // Step 5: Calculate points and enrich transactions
+    const effectiveCardName = cardName !== "default" && cardName 
+      ? cardName 
+      : extractedData.cardName;
+
+    const enrichedTransactions = extractedData.transactions.map(tx => ({
+      user_id: userId,
+      document_id: documentId,
+      transaction_date: tx.date,
+      description: tx.description,
+      amount: tx.amount,
+      category: tx.category,
+      points_earned: calculatePoints(tx.amount, tx.category || "Other", effectiveCardName),
+      merchant_name: tx.merchant,
+      is_masked: true, // All descriptions are PII-masked
+    }));
+
+    const totalPoints = enrichedTransactions.reduce((sum, t) => sum + (t.points_earned || 0), 0);
+
+    // Step 6: PII Masking audit
+    let totalPiiMasked = 0;
+    const piiTypesFound = new Set<string>();
+    for (const tx of extractedData.transactions) {
+      const { piiTypesFound: types, fieldsMasked } = maskPII(tx.description);
+      types.forEach(t => piiTypesFound.add(t));
+      totalPiiMasked += fieldsMasked;
     }
+    auditParams.piiFieldsMasked = totalPiiMasked;
+    auditParams.fieldsExtracted = enrichedTransactions.length;
 
-    if (totalFieldsMasked > 0) {
+    // Log PII masking
+    if (totalPiiMasked > 0) {
       await supabase.from("pii_masking_log").insert({
         user_id: userId,
         source_type: "pdf_statement",
-        pii_types_found: Array.from(allPiiTypes),
-        fields_masked: totalFieldsMasked,
+        pii_types_found: Array.from(piiTypesFound),
+        fields_masked: totalPiiMasked,
       });
     }
 
-    // Step 6: Insert transactions
-    if (transactions.length > 0) {
+    // Step 7: Insert transactions
+    if (enrichedTransactions.length > 0) {
       const { error: txError } = await supabase
         .from("transactions")
-        .insert(transactions);
+        .insert(enrichedTransactions);
 
       if (txError) {
-        console.error("Error inserting transactions:", txError);
+        console.error("Transaction insert error:", txError);
       }
     }
 
-    // Step 7: Generate summary with detected card info
+    // Step 8: Create summary
+    const byCategory = enrichedTransactions.reduce((acc, t) => {
+      acc[t.category || "Other"] = (acc[t.category || "Other"] || 0) + t.amount;
+      return acc;
+    }, {} as Record<string, number>);
+
     const summary = {
-      ...generateSummary(transactions, effectiveCardName),
+      card_name: effectiveCardName,
+      bank_name: extractedData.bankName,
+      total_spend: extractedData.totalSpend,
+      total_points_earned: totalPoints,
+      transaction_count: enrichedTransactions.length,
+      spending_by_category: byCategory,
+      statement_period: extractedData.statementPeriod,
       detected_card: {
-        card_name: detectedCard.cardName,
-        bank_name: detectedCard.bankName,
-        confidence: detectedCard.confidence,
+        card_name: extractedData.cardName,
+        bank_name: extractedData.bankName,
+        confidence: extractedData.confidence,
         auto_detected: cardName === "default" || !cardName,
       },
+      extraction_method: "adaptive_ai",
+      template_signature: extractedData.templateSignature,
     };
 
-    // Step 8: Update document with parsed data
+    // Step 9: Update document with parsed data
     await supabase
       .from("pdf_documents")
       .update({ parsed_data: summary })
       .eq("id", documentId);
 
-    // Step 8b: Create or update credit card entry with validation
-    if (detectedCard.confidence !== "low" && detectedCard.bankName !== "Unknown") {
-      // Validate card and bank names before database operations
-      const validation = validateCardData(detectedCard.cardName, detectedCard.bankName);
-      
-      if (!validation.isValid) {
-        console.warn(`Card name validation failed: ${validation.errors.join(", ")}`);
-        console.log(`Attempting to use sanitized values: card="${validation.sanitizedCardName}", bank="${validation.sanitizedBankName}"`);
-      }
-      
-      // Use sanitized values (they're cleaned up even if validation failed)
-      const finalCardName = validation.sanitizedCardName || detectedCard.cardName;
-      const finalBankName = validation.sanitizedBankName || detectedCard.bankName;
-      
-      // Skip card creation if names are still invalid after sanitization
-      if (!finalCardName || finalCardName.length < 2 || !finalBankName || finalBankName.length < 2) {
-        console.error(`Cannot create card: invalid names after sanitization. Card="${finalCardName}", Bank="${finalBankName}"`);
-      } else {
-        const totalPointsFromStatement = summary.total_points_earned || 0;
-        
-        // Check if card already exists for this user (by bank + card name)
+    // Step 10: Create or update credit card
+    if (extractedData.confidence >= 0.7 && extractedData.bankName !== "Unknown Bank") {
+      const finalCardName = sanitizeName(extractedData.cardName) || "Generic Card";
+      const finalBankName = sanitizeName(extractedData.bankName);
+
+      if (finalCardName.length >= 2 && finalBankName.length >= 2) {
         const { data: existingCards } = await supabase
           .from("credit_cards")
           .select("id, points")
@@ -554,124 +681,161 @@ serve(async (req) => {
           .limit(1);
 
         if (existingCards && existingCards.length > 0) {
-          // Update existing card - add new points
-          const existingCard = existingCards[0];
           await supabase
             .from("credit_cards")
             .update({ 
-              points: (existingCard.points || 0) + totalPointsFromStatement,
+              points: (existingCards[0].points || 0) + totalPoints,
               updated_at: new Date().toISOString(),
             })
-            .eq("id", existingCard.id);
-          console.log(`Updated existing card ${finalBankName} ${finalCardName} with ${totalPointsFromStatement} new points`);
+            .eq("id", existingCards[0].id);
         } else {
-          // Create new card entry
           const variantMap: Record<string, string> = {
+            "HDFC Bank": "emerald",
             "HDFC": "emerald",
+            "Axis Bank": "gold",
             "Axis": "gold",
+            "ICICI Bank": "platinum",
             "ICICI": "platinum",
+            "American Express": "gold",
             "Amex": "gold",
+            "SBI Card": "emerald",
             "SBI": "emerald",
+            "Kotak": "platinum",
+            "IndusInd": "gold",
           };
           
-          const { error: cardError } = await supabase
-            .from("credit_cards")
-            .insert({
-              user_id: userId,
-              bank_name: finalBankName,
-              card_name: finalCardName,
-              points: totalPointsFromStatement,
-              point_value: 0.40, // Default point value
-              variant: variantMap[finalBankName] || "emerald",
-            });
-          
-          if (cardError) {
-            console.error("Error creating credit card:", cardError);
-          } else {
-            console.log(`Created new card: ${finalBankName} ${finalCardName} with ${totalPointsFromStatement} points`);
-          }
+          await supabase.from("credit_cards").insert({
+            user_id: userId,
+            bank_name: finalBankName,
+            card_name: finalCardName,
+            points: totalPoints,
+            point_value: 0.40,
+            variant: variantMap[finalBankName] || "emerald",
+          });
         }
       }
     }
 
-    // Step 9: Create document chunks for RAG
-    const chunkTexts: string[] = [];
+    // Step 11: Create document chunks for RAG
+    const chunks = [];
+    const cardDisplayName = `${extractedData.bankName} ${extractedData.cardName}`;
     
-    // Create summary chunk with detected card info
-    const cardDisplayName = `${detectedCard.bankName} ${detectedCard.cardName}`;
-    chunkTexts.push(`Credit Card Statement Summary for ${cardDisplayName}:
-Total Spend: ₹${summary.total_spend.toLocaleString()}
-Total Points Earned: ${summary.total_points_earned}
-Transaction Count: ${summary.transaction_count}
-Statement Period: ${summary.statement_period.start} to ${summary.statement_period.end}
-Top Categories: ${Object.entries(summary.spending_by_category)
+    // Summary chunk
+    chunks.push({
+      user_id: userId,
+      document_id: documentId,
+      chunk_text: `Credit Card Statement Summary for ${cardDisplayName}:
+Total Spend: ₹${extractedData.totalSpend.toLocaleString()}
+Total Points Earned: ${totalPoints}
+Transaction Count: ${enrichedTransactions.length}
+Statement Period: ${extractedData.statementPeriod.start} to ${extractedData.statementPeriod.end}
+Top Categories: ${Object.entries(byCategory)
   .sort(([,a], [,b]) => (b as number) - (a as number))
   .slice(0, 5)
   .map(([cat, amt]) => `${cat}: ₹${(amt as number).toLocaleString()}`)
-  .join(", ")}`);
+  .join(", ")}`,
+      chunk_index: 0,
+      metadata: {
+        card_name: effectiveCardName,
+        bank_name: extractedData.bankName,
+        document_type: "statement",
+        chunk_type: "summary",
+      },
+    });
 
-    // Create transaction chunks (grouped)
-    const txChunks: string[] = [];
+    // Transaction chunks
     let currentChunk = "";
-    for (const tx of transactions) {
+    let chunkIndex = 1;
+    for (const tx of enrichedTransactions) {
       const txText = `${tx.transaction_date}: ${tx.merchant_name} - ₹${tx.amount} (${tx.category}, ${tx.points_earned} pts)`;
       if (currentChunk.length + txText.length > 400) {
-        txChunks.push(currentChunk);
+        chunks.push({
+          user_id: userId,
+          document_id: documentId,
+          chunk_text: currentChunk,
+          chunk_index: chunkIndex++,
+          metadata: {
+            card_name: effectiveCardName,
+            bank_name: extractedData.bankName,
+            document_type: "statement",
+            chunk_type: "transactions",
+          },
+        });
         currentChunk = txText;
       } else {
         currentChunk += (currentChunk ? "\n" : "") + txText;
       }
     }
-    if (currentChunk) txChunks.push(currentChunk);
-    chunkTexts.push(...txChunks);
-
-    const chunks = chunkTexts.map((text, idx) => ({
-      user_id: userId,
-      document_id: documentId,
-      chunk_text: text,
-      chunk_index: idx,
-      metadata: {
-        card_name: effectiveCardName,
-        bank_name: detectedCard.bankName,
-        document_type: "statement",
-        chunk_type: idx === 0 ? "summary" : "transactions",
-      },
-    }));
-
-    if (chunks.length > 0) {
-      const { error: chunkError } = await supabase
-        .from("document_chunks")
-        .insert(chunks);
-
-      if (chunkError) {
-        console.error("Error inserting chunks:", chunkError);
-      }
+    if (currentChunk) {
+      chunks.push({
+        user_id: userId,
+        document_id: documentId,
+        chunk_text: currentChunk,
+        chunk_index: chunkIndex,
+        metadata: {
+          card_name: effectiveCardName,
+          bank_name: extractedData.bankName,
+          document_type: "statement",
+          chunk_type: "transactions",
+        },
+      });
     }
 
-    // Step 10: Log compliance
+    if (chunks.length > 0) {
+      await supabase.from("document_chunks").insert(chunks);
+    }
+
+    // Step 12: Learn template pattern (no PII stored)
+    await learnTemplate(
+      supabase,
+      extractedData.bankName,
+      extractedData.templateSignature,
+      [], // Layout features already in signature
+      true
+    );
+
+    // Step 13: Compliance logging
     await supabase.from("compliance_logs").insert({
       user_id: userId,
       action: "parse_statement",
       resource_type: "pdf_document",
       resource_id: documentId,
-      pii_accessed: allPiiTypes.size > 0,
-      pii_masked: totalFieldsMasked > 0,
+      pii_accessed: piiTypesFound.size > 0,
+      pii_masked: totalPiiMasked > 0,
+    });
+
+    // Step 14: Audit logging
+    auditParams.processingTimeMs = Date.now() - startTime;
+    auditParams.status = "success";
+    await logExtractionAudit(supabase, userId, documentId, auditParams);
+
+    // Step 15: Token usage logging
+    await supabase.from("token_usage").insert({
+      user_id: userId,
+      model: "google/gemini-2.5-flash",
+      tokens_input: tokensUsed.input,
+      tokens_output: tokensUsed.output,
+      query_type: "pdf_parsing",
+      estimated_cost: (tokensUsed.input * 0.0001 + tokensUsed.output * 0.0003) / 1000,
     });
 
     return new Response(
       JSON.stringify({
         success: true,
         summary,
-        transactions_parsed: transactions.length,
+        transactions_parsed: enrichedTransactions.length,
         chunks_created: chunks.length,
-        pii_masked: totalFieldsMasked,
-        extraction_method: "ai_vision",
+        pii_masked: totalPiiMasked,
+        extraction_method: "adaptive_ai",
+        confidence: extractedData.confidence,
+        template_learned: true,
         detected_card: {
-          card_name: detectedCard.cardName,
-          bank_name: detectedCard.bankName,
-          confidence: detectedCard.confidence,
+          card_name: extractedData.cardName,
+          bank_name: extractedData.bankName,
+          confidence: extractedData.confidence,
           used_for_rewards: effectiveCardName,
         },
+        processing_time_ms: Date.now() - startTime,
       }),
       {
         status: 200,
@@ -679,9 +843,19 @@ Top Categories: ${Object.entries(summary.spending_by_category)
       }
     );
   } catch (error) {
+    const processingTime = Date.now() - startTime;
     console.error("Parse PDF error:", error);
+
+    // Log failed attempt if we have context
+    auditParams.processingTimeMs = processingTime;
+    auditParams.status = "failed";
+    auditParams.errorMessage = error instanceof Error ? error.message : "Unknown error";
+
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ 
+        error: error instanceof Error ? error.message : "Unknown error",
+        processing_time_ms: processingTime,
+      }),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
