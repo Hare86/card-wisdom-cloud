@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, Sparkles, Loader2, Trash2, ThumbsUp, ThumbsDown, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -455,6 +455,9 @@ export function ChatInterface() {
         <DialogContent className="max-w-4xl w-[95vw] h-[85vh] p-0 gap-0 flex flex-col">
           <DialogHeader className="sr-only">
             <DialogTitle>RAG-Powered Assistant</DialogTitle>
+            <DialogDescription>
+              Chat with your AI assistant about credit card benefits and transactions
+            </DialogDescription>
           </DialogHeader>
           <ChatContent
             {...chatProps}

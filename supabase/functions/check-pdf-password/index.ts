@@ -106,13 +106,15 @@ No other output. Just the single word.`;
         "protected",
         "authentication",
         "decrypt",
-        "cipher"
+        "cipher",
+        "not readable",
+        "access denied"
       ];
 
       const textLower = errorText.toLowerCase();
-      const isPasswordProtected = passwordIndicators.some(indicator => textLower.includes(indicator));
+      const hasPasswordIndicator = passwordIndicators.some(indicator => textLower.includes(indicator));
 
-      if (isPasswordProtected) {
+      if (hasPasswordIndicator) {
         console.log("[CHECK-PASSWORD] Detected password-protected PDF via error pattern");
         return new Response(
           JSON.stringify({
@@ -125,12 +127,26 @@ No other output. Just the single word.`;
         );
       }
 
-      // If we can't determine, return unknown state (null)
-      // This will let parse-pdf handle password detection during actual parsing
-      console.log("[CHECK-PASSWORD] Unable to determine, deferring to parse-pdf");
+      // For 400 errors without clear indicators, likely password-protected
+      // Bank statements are typically encrypted
+      if (response.status === 400) {
+        console.log("[CHECK-PASSWORD] 400 error, likely password-protected");
+        return new Response(
+          JSON.stringify({
+            isPasswordProtected: true,
+            documentId,
+            detected: "error_status",
+            note: "AI model rejected PDF, likely encrypted"
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // If we can't determine, assume not protected to allow parsing attempt
+      console.log("[CHECK-PASSWORD] Unable to determine, assuming accessible");
       return new Response(
         JSON.stringify({
-          isPasswordProtected: null,
+          isPasswordProtected: false,
           documentId,
           checked: false,
           note: "Unable to check, will detect during parsing"
