@@ -294,7 +294,7 @@ export default function Upload() {
         return;
       }
 
-      if (data?.isPasswordProtected) {
+      if (data?.isPasswordProtected === true) {
         // PDF is password-protected - immediately prompt for password
         setPendingPasswordFile(file);
         setPasswordDialogOpen(true);
@@ -302,8 +302,14 @@ export default function Upload() {
           title: "Password Required",
           description: "This PDF is password protected. Please enter the password to continue.",
         });
-      } else {
+      } else if (data?.isPasswordProtected === false) {
         // PDF is accessible - show success message
+        toast({
+          title: "File uploaded",
+          description: `${file.file_name} ready. Click "Parse" to extract data.`,
+        });
+      } else {
+        // Unknown state (null) - will detect during parsing
         toast({
           title: "File uploaded",
           description: `${file.file_name} ready. Click "Parse" to extract data.`,
@@ -349,29 +355,14 @@ export default function Upload() {
         },
       });
 
-      // Check for password requirement - now returned as 200 with error field
-      const isPasswordRequired = response.data?.error === "PASSWORD_REQUIRED" || response.data?.requiresPassword;
-
       // Incorrect password: keep dialog open and show a clear message
       if (response.data?.error === "INVALID_PASSWORD") {
+        setIsParsing(null);
         throw new Error("INVALID_PASSWORD");
       }
 
-      // Check for structured error responses from the edge function
-      if (response.data?.error && response.data?.error !== "PASSWORD_REQUIRED") {
-        const parsedError = mapServerError(response.data);
-        setParseError({
-          ...parsedError,
-          fileName: file.file_name,
-        });
-        
-        toast({
-          variant: "destructive",
-          title: "Parsing failed",
-          description: parsedError.userMessage,
-        });
-        return;
-      }
+      // Check for password requirement - now returned as 200 with error field
+      const isPasswordRequired = response.data?.error === "PASSWORD_REQUIRED" || response.data?.requiresPassword;
 
       if (isPasswordRequired) {
         setIsParsing(null);
@@ -381,6 +372,23 @@ export default function Upload() {
           title: "Password Required",
           description: "This PDF is password protected. Please enter the password.",
         });
+        return;
+      }
+
+      // Check for structured error responses from the edge function
+      if (response.data?.error) {
+        const parsedError = mapServerError(response.data);
+        setParseError({
+          ...parsedError,
+          fileName: file.file_name,
+        });
+
+        toast({
+          variant: "destructive",
+          title: "Parsing failed",
+          description: parsedError.userMessage,
+        });
+        setIsParsing(null);
         return;
       }
 
@@ -415,12 +423,14 @@ export default function Upload() {
       const errorMessage = error instanceof Error ? error.message : "Failed to parse document. Please try again.";
 
       if (errorMessage.includes("INVALID_PASSWORD")) {
+        setIsParsing(null);
         // Bubble up so the password dialog handler can show "Invalid password" and keep the dialog open
         throw error;
       }
-      
+
       // Check for password requirement in error
       if (errorMessage.includes("PASSWORD_REQUIRED")) {
+        setIsParsing(null);
         setPendingPasswordFile(file);
         setPasswordDialogOpen(true);
         toast({
@@ -429,20 +439,19 @@ export default function Upload() {
         });
         return;
       }
-      
+
       // Map the error to user-friendly format
       const parsedError = mapServerError(errorMessage);
       setParseError({
         ...parsedError,
         fileName: file.file_name,
       });
-      
+
       toast({
         variant: "destructive",
         title: "Parsing failed",
         description: parsedError.userMessage,
       });
-    } finally {
       setIsParsing(null);
     }
   };

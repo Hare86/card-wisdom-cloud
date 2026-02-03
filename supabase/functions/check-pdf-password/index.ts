@@ -93,33 +93,47 @@ No other output. Just the single word.`;
     if (!response.ok) {
       const errorText = await response.text();
       console.error("[CHECK-PASSWORD] AI check failed:", response.status, errorText);
-      
-      // Detect password-protected PDF: AI Gateway returns "no pages" when PDF is encrypted
-      if (response.status === 400 && (
-        errorText.includes("no pages") || 
-        errorText.includes("document has no pages") ||
-        errorText.includes("empty document") ||
-        errorText.includes("cannot be opened") ||
-        errorText.includes("encrypted") ||
-        errorText.includes("password")
-      )) {
-        console.log("[CHECK-PASSWORD] Detected password-protected PDF via error");
+
+      // Detect password-protected PDF: AI Gateway returns specific errors when PDF is encrypted
+      // Check for ANY indication of password protection or encryption
+      const passwordIndicators = [
+        "no pages",
+        "document has no pages",
+        "empty document",
+        "cannot be opened",
+        "encrypted",
+        "password",
+        "protected",
+        "authentication",
+        "decrypt",
+        "cipher"
+      ];
+
+      const textLower = errorText.toLowerCase();
+      const isPasswordProtected = passwordIndicators.some(indicator => textLower.includes(indicator));
+
+      if (isPasswordProtected) {
+        console.log("[CHECK-PASSWORD] Detected password-protected PDF via error pattern");
         return new Response(
-          JSON.stringify({ 
-            isPasswordProtected: true, 
+          JSON.stringify({
+            isPasswordProtected: true,
             documentId,
-            detected: "error_pattern"
+            detected: "error_pattern",
+            errorHint: errorText.substring(0, 100)
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      
-      // If AI fails for other reasons, assume not protected to allow normal flow
+
+      // If we can't determine, return unknown state (null)
+      // This will let parse-pdf handle password detection during actual parsing
+      console.log("[CHECK-PASSWORD] Unable to determine, deferring to parse-pdf");
       return new Response(
-        JSON.stringify({ 
-          isPasswordProtected: false, 
+        JSON.stringify({
+          isPasswordProtected: null,
           documentId,
-          error: "Check failed, proceeding with normal flow"
+          checked: false,
+          note: "Unable to check, will detect during parsing"
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
