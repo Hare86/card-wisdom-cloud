@@ -1448,12 +1448,30 @@ serve(async (req) => {
     let extractionResult;
     try {
       extractionResult = await extractWithAdaptiveAI(
-        preMaskingStats.maskedText, 
+        preMaskingStats.maskedText,
         preMaskingStats,
         existingTemplates || undefined
       );
     } catch (e) {
-      throw e;
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      console.error("[PHASE 2] AI extraction failed:", errorMsg);
+
+      // Map AI extraction errors to user-friendly messages
+      if (errorMsg.includes("Rate limit") || errorMsg.includes("429")) {
+        throw new Error("AI_RATE_LIMIT");
+      }
+      if (errorMsg.includes("credits exhausted") || errorMsg.includes("402")) {
+        throw new Error("AI_CREDITS_EXHAUSTED");
+      }
+      if (errorMsg.includes("Failed to parse") || errorMsg.includes("JSON")) {
+        throw new Error("AI_EXTRACTION_FAILED");
+      }
+      if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
+        throw new Error("AI_TIMEOUT");
+      }
+
+      // Re-throw with more context
+      throw new Error(`AI_EXTRACTION_ERROR: ${errorMsg}`);
     }
 
     const { data: extractedData, tokensUsed, preMaskingStats: finalMaskingStats } = extractionResult;

@@ -173,6 +173,11 @@ export type PDFParseErrorCode =
   | 'PASSWORD_REQUIRED'
   | 'INVALID_PASSWORD'
   | 'UNSUPPORTED_PDF_CONTENT'
+  | 'AI_RATE_LIMIT'
+  | 'AI_CREDITS_EXHAUSTED'
+  | 'AI_EXTRACTION_FAILED'
+  | 'AI_TIMEOUT'
+  | 'AI_EXTRACTION_ERROR'
   | 'UNKNOWN_ERROR';
 
 export interface PDFParseError {
@@ -214,6 +219,26 @@ export const PARSE_ERROR_DETAILS: Record<PDFParseErrorCode, { userMessage: strin
   UNSUPPORTED_PDF_CONTENT: {
     userMessage: 'This PDF contains only scanned images without extractable text.',
     suggestedAction: 'Try requesting a digital statement from your bank instead of a scanned copy.',
+  },
+  AI_RATE_LIMIT: {
+    userMessage: 'AI processing rate limit reached.',
+    suggestedAction: 'Please wait a few minutes and try again.',
+  },
+  AI_CREDITS_EXHAUSTED: {
+    userMessage: 'AI processing credits have been exhausted.',
+    suggestedAction: 'Please contact support to continue processing documents.',
+  },
+  AI_EXTRACTION_FAILED: {
+    userMessage: 'AI could not extract data from this statement format.',
+    suggestedAction: 'This statement format may not be supported. Try a different month or contact support.',
+  },
+  AI_TIMEOUT: {
+    userMessage: 'AI processing timed out.',
+    suggestedAction: 'Try uploading a smaller file or wait a few minutes and try again.',
+  },
+  AI_EXTRACTION_ERROR: {
+    userMessage: 'An error occurred during AI data extraction.',
+    suggestedAction: 'Please try again. If the problem persists, try a different statement file.',
   },
   UNKNOWN_ERROR: {
     userMessage: 'An unexpected error occurred while processing this PDF.',
