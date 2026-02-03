@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -323,6 +324,9 @@ const Index = () => {
                     <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
                       <DialogHeader>
                         <DialogTitle className="text-xl font-semibold">Your Cards</DialogTitle>
+                        <DialogDescription>
+                          View and manage all your credit cards
+                        </DialogDescription>
                       </DialogHeader>
                       <div className="flex-1 overflow-y-auto py-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

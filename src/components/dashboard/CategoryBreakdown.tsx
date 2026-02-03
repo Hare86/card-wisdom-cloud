@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -167,6 +168,9 @@ export function CategoryBreakdown({ selectedCardId, selectedCardName }: Category
                   </span>
                 )}
               </DialogTitle>
+              <DialogDescription>
+                Detailed breakdown of your spending across different categories
+              </DialogDescription>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto py-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

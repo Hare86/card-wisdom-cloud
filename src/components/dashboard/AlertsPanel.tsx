@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -298,6 +299,9 @@ export function AlertsPanel() {
                   </Badge>
                 )}
               </DialogTitle>
+              <DialogDescription>
+                View all your credit card alerts and notifications
+              </DialogDescription>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto py-4">
               {alerts.length === 0 ? (
