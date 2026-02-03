@@ -1,19 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// pdf.js for password-protected PDF text extraction (no OCR)
-// Using legacy build with worker-less mode for Deno/Edge
-// deno-lint-ignore-file no-explicit-any
-// CRITICAL: Import as namespace and set workerSrc IMMEDIATELY after import
-import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174/legacy/build/pdf.mjs";
-
-// Set worker source at module level - required even in worker-less mode
-// Using CDN URL for the worker file to satisfy pdf.js internal checks
-pdfjsLib.GlobalWorkerOptions.workerSrc = "https://esm.sh/pdfjs-dist@3.11.174/legacy/build/pdf.worker.mjs";
-
-// Re-export for convenience
-const getDocument = pdfjsLib.getDocument;
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -593,96 +580,6 @@ function validatePDFBytes(pdfBytes: Uint8Array): { valid: boolean; error?: PDFEr
   return { valid: true };
 }
 
-/**
- * Password-protected PDFs cannot be read by the AI gateway directly (it sees "no pages").
- * When a password is provided, we extract text locally using pdf.js and then run the normal
- * Adaptive AI extraction on that text.
- */
-async function extractTextWithPdfjs(
-  pdfBytes: Uint8Array,
-  password: string
-): Promise<string> {
-  // Pre-validation
-  const validation = validatePDFBytes(pdfBytes);
-  if (!validation.valid && validation.error) {
-    console.error(`[PDF VALIDATION] Failed: ${validation.error.code} - ${validation.error.message}`);
-    throw new Error(validation.error.code);
-  }
-
-  try {
-    console.log(`[PDF.JS] Starting extraction with password (${pdfBytes.length} bytes)`);
-    
-    // pdf.js workerSrc is already set at module level, so we just use getDocument directly
-    // with disableWorker: true for edge runtime compatibility
-    const loadingTask = getDocument({
-      data: pdfBytes,
-      password,
-      disableWorker: true,
-      useWorkerFetch: false,
-      isEvalSupported: false,
-      useSystemFonts: true,
-      stopAtErrors: false, // Continue parsing even if some objects are invalid
-    } as any);
-
-    // Add timeout for the loading task
-    const timeoutMs = 30000; // 30 second timeout
-    const doc = await Promise.race([
-      loadingTask.promise,
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("PDF parsing timeout")), timeoutMs)
-      ),
-    ]) as any;
-
-    const numPages = doc.numPages || 0;
-    if (numPages === 0) {
-      throw new Error("PDF has zero pages");
-    }
-
-    console.log(`[PDF.JS] Document loaded with ${numPages} pages`);
-    const maxPages = Math.min(numPages, 12);
-    let out = "";
-    let failedPages = 0;
-
-    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-      try {
-        const page = await doc.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const items = (textContent?.items || []) as any[];
-        const pageText = items
-          .map((it: any) => (typeof it?.str === "string" ? it.str : ""))
-          .filter(Boolean)
-          .join(" ");
-        out += `\n\n--- PAGE ${pageNum} ---\n${pageText}`;
-      } catch (pageErr) {
-        console.warn(`[PDF.JS] Failed to extract page ${pageNum}:`, pageErr);
-        failedPages++;
-        // Continue with other pages
-      }
-    }
-
-    if (failedPages > 0) {
-      console.warn(`[PDF.JS] ${failedPages}/${maxPages} pages failed to extract`);
-    }
-
-    const trimmed = out.trim();
-    if (!trimmed) {
-      // If the PDF is image/scanned-based, pdf.js text extraction returns empty.
-      console.log("[PDF.JS] No text content extracted (likely scanned/image PDF)");
-      throw new Error(PDF_ERROR_CODES.NO_TEXT_CONTENT);
-    }
-
-    console.log(`[PDF.JS] Extracted ${trimmed.length} characters from ${maxPages - failedPages} pages`);
-    return trimmed;
-  } catch (err) {
-    const errorInfo = classifyPDFError(err);
-    console.error(`[PDF.JS] Error: ${errorInfo.code} - ${errorInfo.message}`);
-    
-    // Re-throw with the classified error code
-    const error = new Error(errorInfo.code);
-    (error as any).pdfErrorInfo = errorInfo;
-    throw error;
-  }
-}
 
 /**
  * PHASE 1B: Comprehensive LOCAL PII masking (no API calls)
@@ -1275,17 +1172,8 @@ Deno.serve(async (req) => {
     let preMaskingStats: PreExtractionResult;
     
     try {
-      // If the user provided a password, extract text locally using pdf.js.
-      // This avoids the "no pages" error from AI providers when PDFs are encrypted.
-      if (password && typeof password === "string" && password.trim()) {
-        console.log("[PHASE 1A] Password provided; extracting text with pdf.js...");
-        const rawText = await extractTextWithPdfjs(uint8Array, password);
-        ocrResult = { rawText, tokensUsed: { input: 0, output: 0 }, ocrMaskedTypes: [] };
-        auditParams.extractionMethod = "pdfjs_text_extraction_two_layer_masking";
-      } else {
-        // No password - use OCR with inline PII filtering
-        ocrResult = await extractRawTextFromPDF(pdfBase64);
-      }
+      // Use OCR with inline PII filtering (supports password-protected PDFs)
+      ocrResult = await extractRawTextFromPDF(pdfBase64, password);
       
       // PHASE 1B: Apply comprehensive local PII masking
       preMaskingStats = applyComprehensivePIIMasking(
