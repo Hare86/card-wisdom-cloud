@@ -57,6 +57,25 @@ Deno.serve(async (req) => {
     }
     const pdfBase64 = btoa(binary);
 
+    // Check PDF binary for encryption markers FIRST
+    const pdfString = new TextDecoder().decode(uint8Array);
+    const isEncrypted = pdfString.includes("/Encrypt") ||
+                       pdfString.includes("/Filter/Standard") ||
+                       pdfString.includes("/Filter/Crypt");
+
+    if (isEncrypted) {
+      console.log("[CHECK-PASSWORD] PDF contains encryption markers in binary");
+      return new Response(
+        JSON.stringify({
+          isPasswordProtected: true,
+          documentId,
+          detected: "binary_markers",
+          note: "PDF contains encryption dictionary"
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Quick AI check - minimal prompt for fast response
     const checkPrompt = `Analyze this PDF document. Your ONLY task is to determine if it's password-protected.
 
