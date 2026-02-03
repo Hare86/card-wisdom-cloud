@@ -297,10 +297,16 @@ If password-protected without valid password: PASSWORD_REQUIRED`;
   if (!response.ok) {
     const errorText = await response.text();
     console.error("[PHASE 1A] OCR extraction error:", response.status, errorText);
-    
+
+    // Authentication errors
+    if (response.status === 401) {
+      console.error("[PHASE 1A] API authentication failed - check LOVABLE_API_KEY configuration");
+      throw new Error("API authentication failed. Please contact support to configure API access.");
+    }
+
     // Detect password-protected PDF: AI Gateway returns "no pages" when PDF is encrypted
     if (response.status === 400 && (
-      errorText.includes("no pages") || 
+      errorText.includes("no pages") ||
       errorText.includes("document has no pages") ||
       errorText.includes("empty document") ||
       errorText.includes("cannot be opened") ||
@@ -310,7 +316,7 @@ If password-protected without valid password: PASSWORD_REQUIRED`;
       console.log("[PHASE 1A] Detected password-protected PDF");
       throw new Error("PASSWORD_REQUIRED");
     }
-    
+
     if (response.status === 429) {
       throw new Error("Rate limit exceeded. Please try again in a few minutes.");
     }
