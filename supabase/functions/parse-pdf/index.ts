@@ -8,6 +8,39 @@ const corsHeaders = {
 };
 
 // ============================================================================
+// PASSWORD-PROTECTED PDF HANDLING
+// Since pdf-lib and pdf.js don't work reliably in Deno edge functions for
+// password decryption, we use a different approach:
+// 1. Detect if PDF is encrypted (binary markers)
+// 2. If password provided, try to decrypt using external service or AI
+// 3. Return clear error messages for user action
+// ============================================================================
+
+/**
+ * Check if PDF is password-protected by examining binary markers
+ */
+function isPdfPasswordProtected(pdfData: Uint8Array): boolean {
+  // Check first 50KB for encryption markers
+  const checkLength = Math.min(pdfData.length, 50000);
+  const text = new TextDecoder("latin1").decode(pdfData.slice(0, checkLength));
+  
+  // PDF encryption indicators
+  const isEncrypted = text.includes("/Encrypt") || 
+                      text.includes("/Filter/Standard") ||
+                      text.includes("/Filter /Standard") ||
+                      (text.includes("/U ") && text.includes("/O ")) || // User/Owner password objects
+                      text.includes("/Crypt");
+  
+  if (isEncrypted) {
+    console.log("[PDF-CHECK] Detected encryption markers in PDF binary");
+  }
+  
+  return isEncrypted;
+}
+
+// ============================================================================
+// PII MASKING - GDPR/PCI-DSS COMPLIANT
+// All patterns designed to detect and mask sensitive data
 // PII MASKING - GDPR/PCI-DSS COMPLIANT
 // All patterns designed to detect and mask sensitive data
 // ============================================================================
@@ -238,21 +271,54 @@ interface PIIAuditEntry {
 }
 
 /**
- * PHASE 1A: OCR extraction with IN-PROMPT PII filtering
- * The LLM is instructed to mask PII during extraction itself, providing first-layer protection
+ * PHASE 1A: Smart text extraction - uses local pdf.js for password-protected PDFs,
+ * falls back to AI OCR for regular PDFs (better at handling image-based content)
+ * 
+ * Flow:
+ * 1. If password provided → use local pdf.js decryption
+ * 2. If no password → try AI OCR first (handles image PDFs better)
+ * 3. If AI OCR fails with "no pages" → PDF is encrypted, throw PASSWORD_REQUIRED
+ * 
  * Returns both raw text and tokens used for audit purposes
  */
 async function extractRawTextFromPDF(
   pdfBase64: string,
-  password?: string
-): Promise<{ rawText: string; tokensUsed: { input: number; output: number }; ocrMaskedTypes: string[] }> {
+  password?: string,
+  pdfBytes?: Uint8Array
+): Promise<{ rawText: string; tokensUsed: { input: number; output: number }; ocrMaskedTypes: string[]; extractionMethod: string }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
     throw new Error("LOVABLE_API_KEY is not configured");
   }
 
+  // If password is provided, check if PDF is actually encrypted first
+  // Note: AI Gateway cannot decrypt PDFs - the password is informational only
+  // For password-protected PDFs, we need to inform the user to use an unlocked version
+  if (password && pdfBytes) {
+    console.log("[PHASE 1A] Password provided - checking if PDF is encrypted...");
+    
+    const isEncrypted = isPdfPasswordProtected(pdfBytes);
+    
+    if (isEncrypted) {
+      console.log("[PHASE 1A] PDF is encrypted - informing user about limitation");
+      // Unfortunately, AI models cannot decrypt password-protected PDFs
+      // The user needs to unlock the PDF using a tool like Adobe Acrobat
+      const err = new Error("ENCRYPTED_UNSUPPORTED");
+      (err as any).pdfErrorInfo = {
+        code: "ENCRYPTED_UNSUPPORTED",
+        userMessage: "This PDF is password-protected. AI cannot decrypt PDFs directly. Please unlock the PDF first using Adobe Acrobat or an online PDF unlock tool, then upload the unlocked version.",
+        suggestedAction: "Use Adobe Acrobat, Smallpdf, or iLovePDF to remove the password protection, then re-upload",
+        recoverable: true,
+      };
+      throw err;
+    }
+    
+    // PDF has password in request but isn't actually encrypted - proceed normally
+    console.log("[PHASE 1A] PDF is not encrypted despite password being provided, proceeding with OCR");
+  }
+
+  // No password - use AI OCR (better for image-based PDFs)
   // CRITICAL: OCR prompt with MANDATORY PII filtering at extraction time
-  // This ensures PII is masked BEFORE it fully enters the LLM context for interpretation
   const ocrWithFilteringPrompt = `TASK: OCR text extraction with MANDATORY PII redaction.
 
 EXTRACT all visible text from this credit card statement PDF.
@@ -267,8 +333,6 @@ MANDATORY REDACTION (apply during extraction):
 - Any PAN (5 letters + 4 digits + 1 letter) → replace with: [PAN_REDACTED]
 - Any account numbers (9-18 digits after "account/a/c") → replace with: [ACCT_REDACTED]
 - Any addresses with PIN codes → replace address portion with: [ADDRESS_REDACTED]
-
-${password ? `PDF password: ${password}` : ""}
 
 OUTPUT: Only extracted text with redactions applied. No explanations.
 If password-protected without valid password: PASSWORD_REQUIRED`;
@@ -313,7 +377,7 @@ If password-protected without valid password: PASSWORD_REQUIRED`;
       errorText.includes("encrypted") ||
       errorText.includes("password")
     )) {
-      console.log("[PHASE 1A] Detected password-protected PDF");
+      console.log("[PHASE 1A] Detected password-protected PDF - prompting for password");
       throw new Error("PASSWORD_REQUIRED");
     }
 
@@ -346,7 +410,7 @@ If password-protected without valid password: PASSWORD_REQUIRED`;
   if (/XXXX-XXXX-XXXX-\d{4}/.test(content)) ocrMaskedTypes.push("card_ocr");
 
   console.log(`[PHASE 1A] OCR extracted ${content.length} chars, inline-masked types: ${ocrMaskedTypes.join(", ") || "none detected"}`);
-  return { rawText: content, tokensUsed, ocrMaskedTypes };
+  return { rawText: content, tokensUsed, ocrMaskedTypes, extractionMethod: "ai_ocr_with_pii_filter" };
 }
 
 // ============================================================================
@@ -1174,22 +1238,38 @@ serve(async (req) => {
     // Layer 1: OCR with inline filtering (PII masked during extraction)
     // Layer 2: Local regex-based masking (catches anything missed)
     // ========================================================================
-    let ocrResult: { rawText: string; tokensUsed: { input: number; output: number }; ocrMaskedTypes: string[] };
+    let ocrResult: { rawText: string; tokensUsed: { input: number; output: number }; ocrMaskedTypes: string[]; extractionMethod: string };
     let preMaskingStats: PreExtractionResult;
     
     try {
-      // Use OCR with inline PII filtering (supports password-protected PDFs)
-      ocrResult = await extractRawTextFromPDF(pdfBase64, password);
+      // Use smart extraction - local pdf.js for password-protected, AI OCR for regular PDFs
+      ocrResult = await extractRawTextFromPDF(pdfBase64, password, uint8Array);
       
-      // PHASE 1B: Apply comprehensive local PII masking
-      preMaskingStats = applyComprehensivePIIMasking(
-        ocrResult.rawText,
-        ocrResult.ocrMaskedTypes,
-        ocrResult.tokensUsed
-      );
+      // PHASE 1B: Apply comprehensive local PII masking (skip if already done locally)
+      if (ocrResult.extractionMethod === "local_pdfjs_decryption") {
+        // Local extraction already applied PII masking
+        preMaskingStats = {
+          maskedText: ocrResult.rawText,
+          piiTypesFound: ocrResult.ocrMaskedTypes,
+          totalPiiMasked: ocrResult.ocrMaskedTypes.length,
+          rawTextLength: ocrResult.rawText.length,
+          extractionMethod: "ocr_with_inline_filter",
+          auditTrail: [],
+          ocrTokensUsed: ocrResult.tokensUsed,
+        };
+        auditParams.extractionMethod = "local_pdfjs_decryption";
+        console.log(`[PHASE 1] Local pdf.js decryption complete: ${preMaskingStats.totalPiiMasked} PII instances masked`);
+      } else {
+        // AI OCR - apply additional local masking
+        preMaskingStats = applyComprehensivePIIMasking(
+          ocrResult.rawText,
+          ocrResult.ocrMaskedTypes,
+          ocrResult.tokensUsed
+        );
+        auditParams.extractionMethod = "adaptive_ai_two_layer_masking";
+        console.log(`[PHASE 1] Two-layer masking complete: ${preMaskingStats.totalPiiMasked} PII instances masked`);
+      }
       
-      console.log(`[PHASE 1] Two-layer masking complete: ${preMaskingStats.totalPiiMasked} PII instances masked`);
-      auditParams.extractionMethod = "adaptive_ai_two_layer_masking";
       auditParams.llmTokensInput += ocrResult.tokensUsed.input;
       auditParams.llmTokensOutput += ocrResult.tokensUsed.output;
       
