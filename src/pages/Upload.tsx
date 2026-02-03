@@ -272,6 +272,8 @@ export default function Upload() {
   // Check if uploaded PDF is password-protected
   const checkPasswordProtection = async (file: UploadedFile) => {
     try {
+      console.log("[DEBUG] checkPasswordProtection START for file:", file.file_name, "ID:", file.id);
+
       toast({
         title: "Checking document...",
         description: "Detecting if password is required...",
@@ -284,9 +286,10 @@ export default function Upload() {
         },
       });
 
+      console.log("[DEBUG] check-pdf-password response:", { data, error });
+
       if (error) {
-        console.error("Password check error:", error);
-        // If check fails, show normal success toast
+        console.error("[DEBUG] Password check error:", error);
         toast({
           title: "File uploaded",
           description: `${file.file_name} ready. Click "Parse" to extract data.`,
@@ -294,8 +297,10 @@ export default function Upload() {
         return;
       }
 
+      console.log("[DEBUG] isPasswordProtected value:", data?.isPasswordProtected);
+
       if (data?.isPasswordProtected === true) {
-        // PDF is password-protected - immediately prompt for password
+        console.log("[DEBUG] PDF IS PASSWORD PROTECTED - Opening dialog");
         setPendingPasswordFile(file);
         setPasswordDialogOpen(true);
         toast({
@@ -303,21 +308,20 @@ export default function Upload() {
           description: "This PDF is password protected. Please enter the password to continue.",
         });
       } else if (data?.isPasswordProtected === false) {
-        // PDF is accessible - show success message
+        console.log("[DEBUG] PDF is NOT password protected");
         toast({
           title: "File uploaded",
           description: `${file.file_name} ready. Click "Parse" to extract data.`,
         });
       } else {
-        // Unknown state (null) - will detect during parsing
+        console.log("[DEBUG] Password protection status UNKNOWN (null)");
         toast({
           title: "File uploaded",
           description: `${file.file_name} ready. Click "Parse" to extract data.`,
         });
       }
     } catch (error) {
-      console.error("Password check error:", error);
-      // On error, allow normal flow
+      console.error("[DEBUG] Password check exception:", error);
       toast({
         title: "File uploaded",
         description: `${file.file_name} ready. Click "Parse" to extract data.`,
@@ -328,8 +332,10 @@ export default function Upload() {
   const parseDocument = async (file: UploadedFile, providedPassword?: string) => {
     if (!user) return;
 
+    console.log("[DEBUG] parseDocument START for file:", file.file_name, "providedPassword:", !!providedPassword);
+
     setIsParsing(file.id);
-    setParseError(null); // Clear previous errors
+    setParseError(null);
 
     try {
       toast({
@@ -339,10 +345,12 @@ export default function Upload() {
 
       // Check session cache for password (session-only, not persisted)
       const cachedEntry = sessionPasswordCacheRef.current[file.id];
-      const usePassword = providedPassword || 
-        (cachedEntry && Date.now() - cachedEntry.timestamp < PASSWORD_CACHE_TIMEOUT_MS 
-          ? cachedEntry.password 
+      const usePassword = providedPassword ||
+        (cachedEntry && Date.now() - cachedEntry.timestamp < PASSWORD_CACHE_TIMEOUT_MS
+          ? cachedEntry.password
           : undefined);
+
+      console.log("[DEBUG] Using password from:", providedPassword ? "providedPassword" : cachedEntry ? "cache" : "none");
 
       // Call parse-pdf with adaptive AI extraction
       const response = await supabase.functions.invoke("parse-pdf", {
@@ -351,12 +359,20 @@ export default function Upload() {
           userId: user.id,
           filePath: file.file_path,
           cardName: selectedCard,
-          password: usePassword, // Never logged, used only for decryption
+          password: usePassword,
         },
+      });
+
+      console.log("[DEBUG] parse-pdf response:", {
+        hasData: !!response.data,
+        hasError: !!response.error,
+        dataError: response.data?.error,
+        dataKeys: response.data ? Object.keys(response.data) : []
       });
 
       // Incorrect password: keep dialog open and show a clear message
       if (response.data?.error === "INVALID_PASSWORD") {
+        console.log("[DEBUG] INVALID_PASSWORD detected - throwing error to keep dialog open");
         setIsParsing(null);
         throw new Error("INVALID_PASSWORD");
       }
@@ -364,7 +380,14 @@ export default function Upload() {
       // Check for password requirement - now returned as 200 with error field
       const isPasswordRequired = response.data?.error === "PASSWORD_REQUIRED" || response.data?.requiresPassword;
 
+      console.log("[DEBUG] Password required check:", {
+        isPasswordRequired,
+        errorField: response.data?.error,
+        requiresPasswordField: response.data?.requiresPassword
+      });
+
       if (isPasswordRequired) {
+        console.log("[DEBUG] PASSWORD REQUIRED - Opening password dialog");
         setIsParsing(null);
         setPendingPasswordFile(file);
         setPasswordDialogOpen(true);
@@ -377,6 +400,7 @@ export default function Upload() {
 
       // Check for structured error responses from the edge function
       if (response.data?.error) {
+        console.log("[DEBUG] Error in response.data:", response.data.error);
         const parsedError = mapServerError(response.data);
         setParseError({
           ...parsedError,
@@ -393,7 +417,10 @@ export default function Upload() {
       }
 
       // Throw if there's an actual error
-      if (response.error) throw response.error;
+      if (response.error) {
+        console.log("[DEBUG] Throwing response.error:", response.error);
+        throw response.error;
+      }
       
       const data = response.data;
 
@@ -419,17 +446,19 @@ export default function Upload() {
 
       fetchUploadedFiles();
     } catch (error) {
-      console.error("Parse error:", error);
+      console.error("[DEBUG] Parse error caught:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to parse document. Please try again.";
+      console.log("[DEBUG] Error message:", errorMessage);
 
       if (errorMessage.includes("INVALID_PASSWORD")) {
+        console.log("[DEBUG] INVALID_PASSWORD in catch - rethrowing");
         setIsParsing(null);
-        // Bubble up so the password dialog handler can show "Invalid password" and keep the dialog open
         throw error;
       }
 
       // Check for password requirement in error
       if (errorMessage.includes("PASSWORD_REQUIRED")) {
+        console.log("[DEBUG] PASSWORD_REQUIRED in catch - opening dialog");
         setIsParsing(null);
         setPendingPasswordFile(file);
         setPasswordDialogOpen(true);
@@ -441,6 +470,7 @@ export default function Upload() {
       }
 
       // Map the error to user-friendly format
+      console.log("[DEBUG] Mapping error to user-friendly format");
       const parsedError = mapServerError(errorMessage);
       setParseError({
         ...parsedError,
@@ -457,19 +487,25 @@ export default function Upload() {
   };
 
   const handlePasswordSubmit = async () => {
-    if (!pendingPasswordFile || !password.trim()) return;
-    
+    if (!pendingPasswordFile || !password.trim()) {
+      console.log("[DEBUG] handlePasswordSubmit - missing file or password");
+      return;
+    }
+
+    console.log("[DEBUG] handlePasswordSubmit START for file:", pendingPasswordFile.file_name);
     setIsSubmittingPassword(true);
-    
+
     try {
       // Parse with provided password
       await parseDocument(pendingPasswordFile, password);
-      
+
+      console.log("[DEBUG] Password submit SUCCESS - closing dialog");
       // Clear dialog state
       setPasswordDialogOpen(false);
       setPassword("");
       setPendingPasswordFile(null);
     } catch (error) {
+      console.log("[DEBUG] Password submit FAILED - keeping dialog open");
       toast({
         variant: "destructive",
         title: "Invalid password",
