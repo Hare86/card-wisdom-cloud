@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Import shared embedding utilities
@@ -7,7 +7,8 @@ const { generateEmbedding: generateEmbed, embeddingToVector } = embeddings;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
 // Helper to generate embedding with error handling
@@ -115,6 +116,22 @@ const CARD_BENEFITS_DATA: Record<string, CardData[]> = {
   ],
   "ICICI Bank": [
     {
+      card_name: "Coral",
+      source_url: "https://campaigns.icicibank.com/credit-card/coralCreditCard/index.html",
+      benefits: [
+        { category: "Rewards", title: "2X Reward Points on Retail", description: "Earn 2 reward points per ₹100 spent on retail purchases (excluding fuel)", conditions: "1 point per ₹100 on utilities and insurance", value_estimate: 2000 },
+        { category: "Milestone", title: "Milestone Bonus Rewards", description: "Earn 2,000 points on ₹2 lakh annual spend, plus 1,000 points for every additional ₹1 lakh", conditions: "Maximum 10,000 bonus points per year", value_estimate: 4000 },
+        { category: "Lounge", title: "Airport Lounge Access", description: "1 complimentary domestic airport lounge visit per quarter", conditions: "Requires minimum spend of ₹75,000 in previous quarter", value_estimate: 1000 },
+        { category: "Lounge", title: "Railway Lounge Access", description: "4 complimentary railway lounge visits per year", conditions: "No minimum spend required", value_estimate: 2000 },
+        { category: "Entertainment", title: "Movie Discount", description: "25% off on BookMyShow and INOX tickets, up to ₹100 per booking", conditions: "Minimum 2 tickets, 2 times per month (combined for both platforms)", value_estimate: 2400 },
+        { category: "Fuel", title: "Fuel Surcharge Waiver", description: "1% fuel surcharge waiver at HPCL outlets", conditions: "For transactions between ₹400 and ₹4,000, maximum ₹250 per billing cycle", value_estimate: 1200 },
+        { category: "Dining", title: "Dining Discounts", description: "Exclusive dining discounts at over 2,500 restaurants", conditions: "Via ICICI Culinary Treats program", value_estimate: 3000 },
+        { category: "Fee Waiver", title: "Annual Fee Waiver", description: "Annual fee (₹500) waived on spending ₹1.5 lakh in previous year", conditions: "Applicable from second year onwards", value_estimate: 500 },
+        { category: "Concierge", title: "24/7 Concierge Services", description: "Round-the-clock assistance for travel, dining, and lifestyle requests", conditions: "Available for all cardholders", value_estimate: 2000 },
+        { category: "Insurance", title: "Personal Accident Insurance", description: "Personal accident insurance cover worth ₹2 lakh", conditions: "Only for RuPay credit card variant holders", value_estimate: 1000 },
+      ],
+    },
+    {
       card_name: "Emeralde",
       source_url: "https://www.icicibank.com/credit-card/emeralde-credit-card",
       benefits: [
@@ -171,7 +188,7 @@ const CARD_BENEFITS_DATA: Record<string, CardData[]> = {
   ],
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
