@@ -26,6 +26,7 @@ export async function retrieveContext(
     documentChunks: [],
     benefitsContext: [],
     transactionSummary: null,
+    userCards: null,
   };
 
   try {
@@ -36,20 +37,23 @@ export async function retrieveContext(
     // Check if embeddings are available
     if (vectorString) {
       // Run semantic search in parallel for efficiency
-      const [docResults, benefitsResults, transactionResults] = await Promise.all([
+      const [docResults, benefitsResults, transactionResults, userCardsData] = await Promise.all([
         // Semantic search on user's document chunks
         searchDocuments(supabase, vectorString, userId),
         // Semantic search on card benefits knowledge base
         searchBenefits(supabase, vectorString),
         // Get aggregated transaction data
         getTransactionSummary(supabase, userId),
+        // Get user's credit cards
+        getUserCards(supabase, userId),
       ]);
 
       result.documentChunks = docResults;
       result.benefitsContext = benefitsResults;
       result.transactionSummary = transactionResults;
+      result.userCards = userCardsData;
 
-      console.log(`Retrieved context: ${docResults.length} docs, ${benefitsResults.length} benefits`);
+      console.log(`Retrieved context: ${docResults.length} docs, ${benefitsResults.length} benefits, cards: ${userCardsData ? 'yes' : 'no'}`);
     } else {
       // Embeddings not available, use fallback retrieval
       console.log("Embeddings not available, using text-based retrieval");
@@ -148,6 +152,34 @@ async function getTransactionSummary(
 }
 
 /**
+ * Get user's credit cards with points balances
+ */
+async function getUserCards(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<string | null> {
+  const { data: cards, error } = await supabase
+    .from("credit_cards")
+    .select("bank_name, card_name, points, point_value, last_four")
+    .eq("user_id", userId);
+
+  if (error || !cards || cards.length === 0) {
+    return null;
+  }
+
+  const cardsSummary = cards.map((c) => {
+    const pointValue = c.point_value || 0.25; // Default INR per point
+    const estimatedValue = ((c.points || 0) * pointValue).toFixed(0);
+    return `${c.bank_name} ${c.card_name}${c.last_four ? ` (****${c.last_four})` : ''}: ${(c.points || 0).toLocaleString()} points (~₹${estimatedValue} value)`;
+  }).join("\n");
+
+  const totalPoints = cards.reduce((sum, c) => sum + (c.points || 0), 0);
+  const totalValue = cards.reduce((sum, c) => sum + ((c.points || 0) * (c.point_value || 0.25)), 0);
+
+  return `User's Credit Cards (${cards.length} cards, ${totalPoints.toLocaleString()} total points, ~₹${totalValue.toFixed(0)} total value):\n${cardsSummary}`;
+}
+
+/**
  * Fallback to simple text retrieval if semantic search fails
  */
 async function fallbackRetrieval(
@@ -175,6 +207,7 @@ async function fallbackRetrieval(
       (b) => `${b.bank_name} ${b.card_name}: ${b.benefit_title} - ${b.benefit_description}`
     ),
     transactionSummary: null,
+    userCards: null,
   };
 }
 
@@ -184,21 +217,26 @@ async function fallbackRetrieval(
 export function buildContextSection(context: RetrievedContext): string {
   const sections: string[] = [];
 
-  if (context.documentChunks.length > 0) {
-    sections.push("## Your Statement Data\n" + context.documentChunks.join("\n\n"));
+  // User's cards go first (most important for personalization)
+  if (context.userCards) {
+    sections.push("## Your Credit Cards\n" + context.userCards);
   }
 
-  if (context.benefitsContext.length > 0) {
-    sections.push("## Card Benefits\n" + context.benefitsContext.join("\n\n"));
+  if (context.documentChunks.length > 0) {
+    sections.push("## Your Statement Data\n" + context.documentChunks.join("\n\n"));
   }
 
   if (context.transactionSummary) {
     sections.push("## Spending Patterns\n" + context.transactionSummary);
   }
 
-  if (sections.length === 0) {
-    return "";
+  if (context.benefitsContext.length > 0) {
+    sections.push("## Card Benefits Knowledge Base\n" + context.benefitsContext.join("\n\n"));
   }
 
-  return "\n\nRELEVANT CONTEXT:\n" + sections.join("\n\n---\n\n");
+  if (sections.length === 0) {
+    return "\n\nNOTE: No user data is available yet. The user may need to upload their credit card statements or add their cards to get personalized recommendations.";
+  }
+
+  return "\n\nRELEVANT CONTEXT (Use this data to answer the user's question):\n" + sections.join("\n\n---\n\n");
 }
