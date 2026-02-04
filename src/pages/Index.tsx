@@ -13,7 +13,7 @@ import { ChatInterface } from "@/components/chat/ChatInterface";
 import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
 import { getSupabaseClient } from "@/integrations/supabase/lazyClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag, Laptop, CreditCard as CreditCardIcon, Maximize2 } from "lucide-react";
+import { Loader2, Coins, TrendingUp, Wallet, Clock, CreditCard as CreditCardIcon, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -37,125 +37,7 @@ interface CardData {
   variant: CardVariant;
 }
 
-// Card-specific reward rates, benefits, rules, and Q&A
-const cardBenefitsData: Record<string, {
-  rates: { category: string; multiplier: string; icon: React.ReactNode }[];
-  bestRedemption: string;
-  benefits: { title: string; description: string; icon: "lounge" | "cashback" | "milestone" | "insurance" }[];
-  rules: string[];
-  qa: { question: string; answer: string }[];
-}> = {
-  "HDFC": {
-    rates: [
-      { category: "Travel", multiplier: "5x", icon: <Plane className="w-4 h-4 text-primary" /> },
-      { category: "Dining", multiplier: "3x", icon: <Utensils className="w-4 h-4 text-secondary" /> },
-      { category: "Online Shopping", multiplier: "2x", icon: <Laptop className="w-4 h-4 text-info" /> },
-      { category: "Other", multiplier: "1x", icon: <ShoppingBag className="w-4 h-4 text-muted-foreground" /> },
-    ],
-    bestRedemption: "Transfer to KrisFlyer for 1.8x value on business class awards",
-    benefits: [
-      { title: "Airport Lounge Access", description: "Unlimited domestic + 6 international/year", icon: "lounge" },
-      { title: "Milestone Benefits", description: "Bonus 2,500 points on ₹8L annual spend", icon: "milestone" },
-    ],
-    rules: [
-      "Points expire 3 years from earn date",
-      "Minimum redemption: 2,500 points",
-      "No capping on reward points earning",
-      "Points not earned on fuel, rent, utilities, insurance",
-      "10x points on SmartBuy portal purchases",
-    ],
-    qa: [
-      { question: "How do I transfer points to airlines?", answer: "Go to HDFC SmartBuy portal → Rewards → Transfer to Partners. KrisFlyer, Club Vistara available." },
-      { question: "What's the best value redemption?", answer: "Transfer to Singapore KrisFlyer for business class awards - get 1.8x value compared to cashback." },
-      { question: "Do points expire?", answer: "Yes, 3 years from the date of earning. Check your statement for exact expiry dates." },
-    ],
-  },
-  "MoneyBack": {
-    rates: [
-      { category: "Groceries", multiplier: "5x", icon: <ShoppingBag className="w-4 h-4 text-primary" /> },
-      { category: "Utilities", multiplier: "2x", icon: <Laptop className="w-4 h-4 text-secondary" /> },
-      { category: "Fuel", multiplier: "2x", icon: <Plane className="w-4 h-4 text-info" /> },
-      { category: "Other", multiplier: "1x", icon: <ShoppingBag className="w-4 h-4 text-muted-foreground" /> },
-    ],
-    bestRedemption: "Direct cashback to statement - no transfer needed, instant value",
-    benefits: [
-      { title: "Cashback Rewards", description: "Direct statement credit, no conversion hassle", icon: "cashback" },
-      { title: "Fuel Surcharge Waiver", description: "1% waiver on fuel transactions (up to ₹250/month)", icon: "insurance" },
-    ],
-    rules: [
-      "Cashback credited within 90 days of transaction",
-      "Minimum cashback redemption: ₹500",
-      "Maximum monthly cashback: ₹3,000",
-      "Fuel surcharge waiver up to ₹250/month",
-      "Not applicable on wallet loads, EMI transactions",
-    ],
-    qa: [
-      { question: "When do I get my cashback?", answer: "Cashback is auto-credited to your statement within 90 days of the qualifying transaction." },
-      { question: "Is there a cap on earnings?", answer: "Yes, maximum ₹3,000 cashback per month across all categories." },
-      { question: "How does fuel surcharge waiver work?", answer: "1% surcharge waived automatically on fuel purchases between ₹400-₹5,000 (max ₹250/month)." },
-    ],
-  },
-  "Amex": {
-    rates: [
-      { category: "Travel", multiplier: "4x", icon: <Plane className="w-4 h-4 text-primary" /> },
-      { category: "Dining", multiplier: "4x", icon: <Utensils className="w-4 h-4 text-secondary" /> },
-      { category: "Entertainment", multiplier: "3x", icon: <Laptop className="w-4 h-4 text-info" /> },
-      { category: "Other", multiplier: "1x", icon: <ShoppingBag className="w-4 h-4 text-muted-foreground" /> },
-    ],
-    bestRedemption: "Transfer to Marriott Bonvoy for 1:1 hotel points with 5th night free",
-    benefits: [
-      { title: "Premium Lounge Access", description: "Priority Pass + Amex lounges worldwide", icon: "lounge" },
-      { title: "Travel Insurance", description: "Complimentary travel insurance up to ₹50L", icon: "insurance" },
-    ],
-    rules: [
-      "Points never expire as long as account is active",
-      "Minimum redemption: 1,000 points",
-      "Transfer ratio varies by partner (1:1 to 1:2)",
-      "18,000 points for Taj voucher worth ₹10,000",
-      "Annual fee waived on ₹4L annual spend",
-    ],
-    qa: [
-      { question: "Do Amex points expire?", answer: "No! Amex Membership Rewards points never expire as long as your card account remains open and in good standing." },
-      { question: "Best hotel transfer partner?", answer: "Marriott Bonvoy at 1:1 ratio. Book 5 nights, get 5th night free on award stays." },
-      { question: "How to use Priority Pass?", answer: "Download Priority Pass app, register with your card number, and show the digital card at participating lounges." },
-    ],
-  },
-};
-
-// Default fallback for unknown cards
-const defaultCardBenefits = {
-  rates: [
-    { category: "All Purchases", multiplier: "1x", icon: <ShoppingBag className="w-4 h-4 text-primary" /> },
-  ],
-  bestRedemption: "Redeem points for statement credit or gift vouchers",
-  benefits: [
-    { title: "Standard Rewards", description: "Earn points on all purchases", icon: "milestone" as const },
-  ],
-  rules: [
-    "Points validity varies by issuer",
-    "Check your statement for specific terms",
-    "Standard reward rate applies to all purchases",
-  ],
-  qa: [
-    { question: "How do I redeem points?", answer: "Visit your card issuer's rewards portal or call customer service to explore redemption options." },
-    { question: "Do my points expire?", answer: "Check your monthly statement or contact your bank for expiry details specific to your card." },
-  ],
-};
-
-// Helper to get card benefits based on card name or bank
-const getCardBenefits = (cardName: string, bankName: string) => {
-  // Check card name first, then bank name
-  if (cardName.toLowerCase().includes("moneyback")) return cardBenefitsData["MoneyBack"];
-  if (cardName.toLowerCase().includes("amex") || bankName.toLowerCase().includes("amex") || bankName.toLowerCase().includes("american express")) return cardBenefitsData["Amex"];
-  if (bankName.toLowerCase().includes("hdfc")) return cardBenefitsData["HDFC"];
-  return defaultCardBenefits;
-};
-
-// Static actions removed - now fetched from database in ActionCenter component
-
-// Recommendations are now generated dynamically in RecommendationCard component based on selected card
-
-// Categories are now fetched dynamically in CategoryBreakdown component
+// Benefits, alerts, and actions now fetched from database in their respective components
 
 const Index = () => {
   const navigate = useNavigate();
@@ -431,20 +313,14 @@ const Index = () => {
               )}
             </div>
 
-            {/* Benefits Tabs */}
-            {selectedCard && (() => {
-              const cardBenefits = getCardBenefits(selectedCard.cardName, selectedCard.bankName);
-              return (
-                <BenefitTabs
-                  cardName={selectedCard.cardName}
-                  rates={cardBenefits.rates}
-                  bestRedemption={cardBenefits.bestRedemption}
-                  benefits={cardBenefits.benefits}
-                  rules={cardBenefits.rules}
-                  qa={cardBenefits.qa}
-                />
-              );
-            })()}
+            {/* Benefits Tabs - Now fetches data from card_benefits table */}
+            {selectedCard && (
+              <BenefitTabs
+                cardName={selectedCard.cardName}
+                bankName={selectedCard.bankName}
+                selectedCardId={selectedCard.id}
+              />
+            )}
 
             {/* Recommendations */}
             <RecommendationCard 
@@ -458,7 +334,10 @@ const Index = () => {
 
           {/* Right Column - Alerts, Actions, Chat, Analytics */}
           <div className="lg:col-span-4 space-y-4 lg:space-y-6">
-            <AlertsPanel />
+            <AlertsPanel 
+              selectedCardId={selectedCard?.id}
+              selectedCardName={selectedCard?.cardName}
+            />
             <ActionCenter 
               selectedCardId={selectedCard?.id} 
               selectedCardName={selectedCard?.cardName} 
