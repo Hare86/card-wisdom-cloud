@@ -170,6 +170,66 @@ const Index = () => {
       if (!user?.id) return [];
       const sb = getSupabaseClient();
       if (!sb) return [];
+
+      // Backfill: if statements are parsed but cards were never created (older parses),
+      // create missing card rows from pdf_documents.parsed_data.
+      try {
+        const { data: docs } = await sb
+          .from("pdf_documents")
+          .select("id, parsed_data")
+          .eq("user_id", user.id)
+          .not("parsed_data", "is", null);
+
+        if (docs && docs.length > 0) {
+          const { data: existing } = await sb
+            .from("credit_cards")
+            .select("bank_name, card_name")
+            .eq("user_id", user.id);
+
+          const existingKey = new Set(
+            (existing || []).map((c) => `${c.bank_name}||${c.card_name}`),
+          );
+
+          const missingCards: Array<{
+            user_id: string;
+            bank_name: string;
+            card_name: string;
+            points: number;
+            point_value: number;
+            variant: string;
+          }> = [];
+
+          for (const doc of docs) {
+            const parsed = doc.parsed_data as any;
+            const bank = parsed?.bank_name;
+            const card = parsed?.card_name;
+            if (!bank || !card) continue;
+
+            const key = `${bank}||${card}`;
+            if (existingKey.has(key)) continue;
+            existingKey.add(key);
+
+            const points = Number(parsed?.total_points_earned ?? 0) || 0;
+
+            missingCards.push({
+              user_id: user.id,
+              bank_name: bank,
+              card_name: card,
+              points,
+              point_value: 0.4,
+              variant: "emerald",
+            });
+          }
+
+          if (missingCards.length > 0) {
+            await sb.from("credit_cards").insert(missingCards);
+          }
+        }
+      } catch (e) {
+        // Non-blocking backfill; dashboard should still load.
+        console.warn("Card backfill skipped:", e);
+      }
+
       const { data, error } = await sb
         .from("credit_cards")
         .select("*")
