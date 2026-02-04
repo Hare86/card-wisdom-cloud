@@ -55,14 +55,19 @@ const ERROR_TITLES: Record<string, string> = {
   UNKNOWN_ERROR: 'Processing Error',
 };
 
-export function PDFErrorAlert({
+import * as React from "react";
+
+export const PDFErrorAlert = React.forwardRef<
+  HTMLDivElement,
+  PDFErrorAlertProps
+>(function PDFErrorAlert({
   errorCode,
   errorMessage,
   suggestedAction,
   fileName,
   onDismiss,
   onRetry,
-}: PDFErrorAlertProps) {
+}, ref) {
   const Icon = ERROR_ICONS[errorCode] || AlertCircle;
   const title = ERROR_TITLES[errorCode] || 'Error';
 
@@ -140,4 +145,6 @@ export function PDFErrorAlert({
       </AlertDescription>
     </Alert>
   );
-}
+});
+
+PDFErrorAlert.displayName = "PDFErrorAlert";
