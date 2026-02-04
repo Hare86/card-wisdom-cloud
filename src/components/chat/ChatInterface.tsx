@@ -26,11 +26,11 @@ const suggestedQuestions = [
 ];
 
 const getRagChatUrl = () => {
-  const status = getBackendStatus();
-  if (!status.ready) return null;
+  // Use env vars with fallback to hardcoded project URL
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID as string | undefined;
-  const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? (projectId ? `https://${projectId}.supabase.co` : undefined);
-  return url ? `${url}/functions/v1/rag-chat` : null;
+  const envUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+  const url = envUrl ?? (projectId ? `https://${projectId}.supabase.co` : "https://sjwdbubmrnsycfgtzhga.supabase.co");
+  return `${url}/functions/v1/rag-chat`;
 };
 
 interface ChatContentProps {
