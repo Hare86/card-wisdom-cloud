@@ -5,15 +5,21 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID as string | undefined;
+
+const SUPABASE_URL =
+  (import.meta.env.VITE_SUPABASE_URL as string | undefined) ??
+  (PROJECT_ID ? `https://${PROJECT_ID}.supabase.co` : undefined);
+
 const SUPABASE_KEY =
   (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ??
   (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined) ??
   (import.meta.env.VITE_SUPABASE_ANON as string | undefined);
 
 if (!SUPABASE_URL) {
+  console.error("Available env vars:", Object.keys(import.meta.env).filter(k => k.startsWith("VITE_")));
   throw new Error(
-    "Missing VITE_SUPABASE_URL. Backend connection is not configured for this environment."
+    "Missing VITE_SUPABASE_URL or VITE_SUPABASE_PROJECT_ID. Backend connection is not configured."
   );
 }
 
