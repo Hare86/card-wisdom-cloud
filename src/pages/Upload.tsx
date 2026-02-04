@@ -7,6 +7,7 @@ import { MobileNav } from "@/components/dashboard/MobileNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Upload as UploadIcon, 
@@ -17,7 +18,8 @@ import {
   ArrowLeft,
   Sparkles,
   ShieldCheck,
-  Lock
+  Lock,
+  ChevronDown
 } from "lucide-react";
 import { validatePDFFile, mapServerError, type PDFParseError } from "@/lib/pdf-validation";
 import { PDFErrorAlert } from "@/components/upload/PDFErrorAlert";
@@ -529,45 +531,40 @@ export default function Upload() {
                 </label>
               </div>
 
-              {/* Password Notice */}
-              <div className="flex items-start gap-3 p-4 bg-warning/10 border border-warning/30 rounded-lg">
-                <Lock className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
-                <div className="text-sm space-y-3">
-                  <p className="font-medium text-warning">Password-Protected PDFs</p>
-                  <p className="text-muted-foreground">
-                    If your bank statement is password-protected, you can unlock it using one of these methods:
-                  </p>
+              {/* Password Notice - Collapsible */}
+              <Collapsible>
+                <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg">
+                  <CollapsibleTrigger className="flex items-center justify-between w-full text-left">
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-warning flex-shrink-0" />
+                      <span className="text-sm font-medium text-warning">Have a password-protected PDF?</span>
+                    </div>
+                    <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform duration-200 [&[data-state=open]]:rotate-180" />
+                  </CollapsibleTrigger>
                   
-                  {/* Method 1: Browser Print */}
-                  <div className="space-y-2">
-                    <p className="font-medium text-foreground">Option 1: Unlock via Browser (Recommended)</p>
-                    <ol className="list-decimal list-inside text-muted-foreground space-y-1 pl-1">
-                      <li>Open the PDF file in your browser (Chrome, Edge, or Safari)</li>
-                      <li>Enter the password when prompted to view the document</li>
-                      <li>Once the PDF opens, press <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Ctrl+P</kbd> (Windows) or <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Cmd+P</kbd> (Mac) to open print</li>
-                      <li>Select "Save as PDF" or "Microsoft Print to PDF" as the printer</li>
-                      <li>Save the file — this new PDF will be unlocked and ready to upload</li>
-                    </ol>
-                  </div>
-
-                  {/* Method 2: Online Tool */}
-                  <div className="space-y-2">
-                    <p className="font-medium text-foreground">Option 2: Use an Online Tool</p>
-                    <p className="text-muted-foreground">
-                      Visit{" "}
-                      <a 
-                        href="https://www.ilovepdf.com/unlock_pdf" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="underline text-primary hover:text-primary/80"
-                      >
-                        iLovePDF Unlock
-                      </a>{" "}
-                      to remove the password online, then download the unlocked file.
-                    </p>
-                  </div>
+                  <CollapsibleContent className="pt-3 mt-3 border-t border-warning/20">
+                    <div className="text-sm space-y-3">
+                      <div className="space-y-1.5">
+                        <p className="font-medium text-foreground text-xs">Quick Unlock (Browser)</p>
+                        <p className="text-xs text-muted-foreground">
+                          Open PDF in browser → Enter password → Press <kbd className="px-1 py-0.5 bg-muted rounded text-[10px] font-mono">Ctrl/Cmd+P</kbd> → Save as PDF
+                        </p>
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="font-medium text-foreground text-xs">Or use online tool</p>
+                        <a 
+                          href="https://www.ilovepdf.com/unlock_pdf" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-xs underline text-primary hover:text-primary/80"
+                        >
+                          iLovePDF Unlock →
+                        </a>
+                      </div>
+                    </div>
+                  </CollapsibleContent>
                 </div>
-              </div>
+              </Collapsible>
 
               {/* Security Notice */}
               <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
