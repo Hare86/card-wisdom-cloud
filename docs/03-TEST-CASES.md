@@ -3,8 +3,8 @@
 
 | Document Information | |
 |---------------------|---|
-| **Document Version** | 1.0 |
-| **Last Updated** | January 31, 2026 |
+| **Document Version** | 1.1 |
+| **Last Updated** | February 4, 2026 |
 | **Author** | QA Team |
 | **Status** | Approved |
 | **Test Environment** | Preview & Production |
