@@ -11,7 +11,7 @@ import { RecommendationCard } from "@/components/dashboard/RecommendationCard";
 import { CategoryBreakdown } from "@/components/dashboard/CategoryBreakdown";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/safeClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag, Laptop, CreditCard as CreditCardIcon, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";

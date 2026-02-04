@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -870,7 +870,7 @@ function applyComprehensivePIIMasking(
 async function extractWithAdaptiveAI(
   maskedText: string,
   preMaskingStats: PreExtractionResult,
-  existingTemplates?: unknown[]
+  existingTemplates?: Array<{ bank_name?: string | null }>
 ): Promise<{ data: ExtractedData; rawResponse: string; tokensUsed: { input: number; output: number }; preMaskingStats: PreExtractionResult }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
@@ -878,8 +878,11 @@ async function extractWithAdaptiveAI(
   }
 
   // Construct hints from existing templates if available
-  const templateHints = existingTemplates?.length 
-    ? `Known bank formats include: ${existingTemplates.map(t => t.bank_name).join(", ")}. But extract based on actual content.`
+  const templateHints = existingTemplates?.length
+    ? `Known bank formats include: ${existingTemplates
+        .map((t) => t.bank_name)
+        .filter((n): n is string => typeof n === "string" && n.length > 0)
+        .join(", ")}. But extract based on actual content.`
     : "";
 
   const systemPrompt = `You are an expert credit card statement parser for Indian banks. 
@@ -986,7 +989,7 @@ Parse ALL visible transactions. For amounts, use positive numbers (debits as pos
     transactions.push({
       date: tx.date || new Date().toISOString().split("T")[0],
       description: maskedDesc,
-      amount: Math.abs(parseFloat(tx.amount) || 0),
+      amount: Math.abs(Number(tx.amount ?? 0)),
       merchant: sanitizeName(tx.merchant || maskedDesc.split(" ").slice(0, 2).join(" ")),
       category,
     });
@@ -1018,7 +1021,7 @@ Parse ALL visible transactions. For amounts, use positive numbers (debits as pos
 // ============================================================================
 
 async function learnTemplate(
-  supabase: { from: (table: string) => { select: (cols?: string) => Promise<unknown>; eq?: (col: string, val: unknown) => unknown; single?: () => unknown }; },
+  supabase: SupabaseClient,
   bankName: string,
   templateSignature: string,
   layoutFeatures: string[],
@@ -1069,7 +1072,7 @@ async function learnTemplate(
 // ============================================================================
 
 async function logExtractionAudit(
-  supabase: { from: (table: string) => { insert: (row: Record<string, unknown>) => Promise<unknown> } & Record<string, unknown>; },
+  supabase: SupabaseClient,
   userId: string,
   documentId: string,
   params: {
@@ -1114,7 +1117,7 @@ async function logExtractionAudit(
  * Log detailed PII masking audit for compliance
  */
 async function logPIIAudit(
-  supabase: { from: (table: string) => { insert: (row: Record<string, unknown>) => Promise<unknown> } & Record<string, unknown>; },
+  supabase: SupabaseClient,
   userId: string,
   documentId: string,
   auditTrail: PIIAuditEntry[],
@@ -1167,6 +1170,8 @@ serve(async (req) => {
     llmTokensInput: number;
     llmTokensOutput: number;
     passwordProtected: boolean;
+    status: "success" | "failed" | "pending";
+    errorMessage?: string;
   } = {
     extractionMethod: "adaptive_ai_two_layer_masking",
     confidenceScore: 0,
