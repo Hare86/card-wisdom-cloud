@@ -36,11 +36,15 @@ export const getBackendStatus = () => {
 };
 
 export const getSupabaseClient = (): SupabaseClient<Database> | null => {
-  if (cachedClient !== undefined) return cachedClient;
+  // If we have a valid cached client, return it
+  if (cachedClient) return cachedClient;
 
   const { url, key } = readEnv();
+  
+  // If env vars aren't available, return null but don't cache it
+  // This allows retry on next call if vars become available
   if (!url || !key) {
-    cachedClient = null;
+    console.warn("Backend client not initialized:", { urlPresent: Boolean(url), keyPresent: Boolean(key) });
     return null;
   }
 
@@ -55,7 +59,6 @@ export const getSupabaseClient = (): SupabaseClient<Database> | null => {
     return cachedClient;
   } catch (e) {
     console.error("Failed to initialize backend client:", e);
-    cachedClient = null;
     return null;
   }
 };

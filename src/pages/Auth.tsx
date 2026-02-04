@@ -56,12 +56,16 @@ export default function Auth() {
     setIsSubmitting(false);
 
     if (error) {
+      let description = error.message;
+      if (error.message === "Invalid login credentials") {
+        description = "Invalid email or password. Please try again.";
+      } else if (error.message === "Backend not configured") {
+        description = "Backend connection is not available. Please try again later.";
+      }
       toast({
         variant: "destructive",
         title: "Login Failed",
-        description: error.message === "Invalid login credentials" 
-          ? "Invalid email or password. Please try again."
-          : error.message,
+        description,
       });
     } else {
       toast({
@@ -93,7 +97,13 @@ export default function Auth() {
     setIsSubmitting(false);
 
     if (error) {
-      if (error.message.includes("already registered")) {
+      if (error.message === "Backend not configured") {
+        toast({
+          variant: "destructive",
+          title: "Signup Failed",
+          description: "Backend connection is not available. Please try again later.",
+        });
+      } else if (error.message.includes("already registered")) {
         toast({
           variant: "destructive",
           title: "Account Exists",
@@ -109,8 +119,8 @@ export default function Auth() {
       }
     } else {
       toast({
-        title: "Check your email",
-        description: "We've sent you a confirmation link. Please verify your email to continue.",
+        title: "Account created!",
+        description: "You can now sign in with your credentials.",
       });
     }
   };
