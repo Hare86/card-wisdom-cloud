@@ -70,7 +70,12 @@ const alertActionGuidance: Record<string, { action: string; buttonLabel: string;
   },
 };
 
-export function AlertsPanel() {
+interface AlertsPanelProps {
+  selectedCardId?: string | null;
+  selectedCardName?: string;
+}
+
+export function AlertsPanel({ selectedCardId, selectedCardName }: AlertsPanelProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -82,22 +87,35 @@ export function AlertsPanel() {
     if (user) {
       fetchAlerts();
     }
-  }, [user]);
+  }, [user, selectedCardId]);
 
   const fetchAlerts = async () => {
     try {
+      setLoading(true);
       const sb = getSupabaseClient();
-      if (!sb) return;
-      const { data, error } = await sb
+      if (!sb) {
+        setAlerts([]);
+        return;
+      }
+      
+      let query = sb
         .from("user_alerts")
         .select("*")
         .order("created_at", { ascending: false })
         .limit(10);
 
+      // Filter by selected card OR general alerts (no card_id)
+      if (selectedCardId) {
+        query = query.or(`card_id.eq.${selectedCardId},card_id.is.null`);
+      }
+
+      const { data, error } = await query;
+
       if (error) throw error;
       setAlerts(data || []);
     } catch (error) {
       console.error("Error fetching alerts:", error);
+      setAlerts([]);
     } finally {
       setLoading(false);
     }
@@ -277,15 +295,22 @@ export function AlertsPanel() {
   return (
     <Card className="glass-card">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="flex items-center gap-2">
-          <Bell className="w-5 h-5 text-primary" />
-          Alerts
-          {unreadCount > 0 && (
-            <Badge variant="destructive" className="ml-2">
-              {unreadCount}
-            </Badge>
+        <div>
+          <CardTitle className="flex items-center gap-2">
+            <Bell className="w-5 h-5 text-primary" />
+            Alerts
+            {unreadCount > 0 && (
+              <Badge variant="destructive" className="ml-2">
+                {unreadCount}
+              </Badge>
+            )}
+          </CardTitle>
+          {selectedCardName && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Showing for {selectedCardName}
+            </p>
           )}
-        </CardTitle>
+        </div>
         <Dialog>
           <DialogTrigger asChild>
             <Button

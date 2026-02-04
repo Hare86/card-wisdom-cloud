@@ -346,6 +346,37 @@ export default function Transactions() {
           </Button>
         </div>
 
+        {/* Quick Card Selector */}
+        {cards.length > 0 && (
+          <div className="mb-6">
+            <div className="flex items-center gap-3 overflow-x-auto pb-2">
+              <button
+                onClick={() => setSelectedCard("all")}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap ${
+                  selectedCard === "all"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                All Cards
+              </button>
+              {cards.map((card) => (
+                <button
+                  key={card.id}
+                  onClick={() => setSelectedCard(card.id)}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap ${
+                    selectedCard === card.id
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {card.bank_name} {card.card_name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <Card className="glass-card">
@@ -356,7 +387,9 @@ export default function Transactions() {
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{stats.count}</p>
-                  <p className="text-xs text-muted-foreground">Transactions</p>
+                  <p className="text-xs text-muted-foreground">
+                    Transactions{selectedCard !== "all" && " (filtered)"}
+                  </p>
                 </div>
               </div>
             </CardContent>
