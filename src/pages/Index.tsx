@@ -11,7 +11,7 @@ import { RecommendationCard } from "@/components/dashboard/RecommendationCard";
 import { CategoryBreakdown } from "@/components/dashboard/CategoryBreakdown";
 import { ChatInterface } from "@/components/chat/ChatInterface";
 import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
-import { supabase } from "@/integrations/supabase/safeClient";
+import { getSupabaseClient } from "@/integrations/supabase/lazyClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Coins, TrendingUp, Wallet, Clock, Plane, Utensils, ShoppingBag, Laptop, CreditCard as CreditCardIcon, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -168,7 +168,9 @@ const Index = () => {
     queryKey: ["credit-cards", user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
-      const { data, error } = await supabase
+      const sb = getSupabaseClient();
+      if (!sb) return [];
+      const { data, error } = await sb
         .from("credit_cards")
         .select("*")
         .eq("user_id", user.id)
@@ -194,8 +196,10 @@ const Index = () => {
   // Delete card mutation
   const deleteCardMutation = useMutation({
     mutationFn: async (cardId: string) => {
+      const sb = getSupabaseClient();
+      if (!sb) throw new Error("Backend not configured");
       // First delete associated transactions
-      const { error: txError } = await supabase
+      const { error: txError } = await sb
         .from("transactions")
         .delete()
         .eq("card_id", cardId);
@@ -203,7 +207,7 @@ const Index = () => {
       if (txError) throw txError;
 
       // Then delete the card
-      const { error: cardError } = await supabase
+      const { error: cardError } = await sb
         .from("credit_cards")
         .delete()
         .eq("id", cardId);

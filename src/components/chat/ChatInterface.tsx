@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/safeClient";
+import { getBackendStatus, getSupabaseClient } from "@/integrations/supabase/lazyClient";
 import { useToast } from "@/hooks/use-toast";
 import ReactMarkdown from "react-markdown";
 
@@ -25,7 +25,13 @@ const suggestedQuestions = [
   "When do my points expire?",
 ];
 
-const RAG_CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/rag-chat`;
+const getRagChatUrl = () => {
+  const status = getBackendStatus();
+  if (!status.ready) return null;
+  const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID as string | undefined;
+  const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? (projectId ? `https://${projectId}.supabase.co` : undefined);
+  return url ? `${url}/functions/v1/rag-chat` : null;
+};
 
 interface ChatContentProps {
   messages: Message[];
@@ -302,7 +308,9 @@ export function ChatInterface() {
     };
 
     try {
-      const response = await fetch(RAG_CHAT_URL, {
+      const ragUrl = getRagChatUrl();
+      if (!ragUrl) throw new Error("Backend not configured");
+      const response = await fetch(ragUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -382,6 +390,13 @@ export function ChatInterface() {
       }
     } catch (error) {
       console.error("Chat error:", error);
+      if (error instanceof Error && error.message === "Backend not configured") {
+        toast({
+          variant: "destructive",
+          title: "Backend not configured",
+          description: "Chat is unavailable in this environment.",
+        });
+      }
       if (!assistantContent) {
         setMessages((prev) => [
           ...prev,
@@ -406,7 +421,9 @@ export function ChatInterface() {
       const query = messages[msgIndex - 1]?.content;
       const response = messages[msgIndex]?.content;
 
-      await supabase.from("ai_evaluations").insert({
+      const sb = getSupabaseClient();
+      if (!sb) return;
+      await sb.from("ai_evaluations").insert({
         user_id: user?.id,
         query,
         response,

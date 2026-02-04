@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/safeClient";
+import { getSupabaseClient } from "@/integrations/supabase/lazyClient";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { MobileNav } from "@/components/dashboard/MobileNav";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -115,8 +115,10 @@ export default function Transactions() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      const sb = getSupabaseClient();
+      if (!sb) throw new Error("Backend not configured");
       const [txRes, cardRes] = await Promise.all([
-        supabase
+        sb
           .from("transactions")
           .select(`
             *,
@@ -126,7 +128,7 @@ export default function Transactions() {
             )
           `)
           .order("transaction_date", { ascending: false }),
-        supabase
+        sb
           .from("credit_cards")
           .select("id, card_name, bank_name"),
       ]);
@@ -149,7 +151,9 @@ export default function Transactions() {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to load transactions",
+        description: error instanceof Error && error.message === "Backend not configured"
+          ? "Backend connection is not configured for this environment."
+          : "Failed to load transactions",
       });
     } finally {
       setLoading(false);

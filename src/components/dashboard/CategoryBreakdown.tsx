@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { supabase } from "@/integrations/supabase/safeClient";
+import { getSupabaseClient } from "@/integrations/supabase/lazyClient";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface Category {
@@ -52,11 +52,18 @@ export function CategoryBreakdown({ selectedCardId, selectedCardName }: Category
     try {
       setLoading(true);
 
+      const sb = getSupabaseClient();
+      if (!sb || !user?.id) {
+        setCategories([]);
+        setTotalSpend(0);
+        return;
+      }
+
       // Build query based on selected card
-      let query = supabase
+      let query = sb
         .from("transactions")
         .select("category, amount")
-        .eq("user_id", user!.id);
+        .eq("user_id", user.id);
 
       // Filter by selected card if provided
       if (selectedCardId) {

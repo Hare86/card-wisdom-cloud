@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/safeClient";
+import { getSupabaseClient } from "@/integrations/supabase/lazyClient";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { MobileNav } from "@/components/dashboard/MobileNav";
 import { Button } from "@/components/ui/button";
@@ -122,7 +122,9 @@ export default function Upload() {
 
   const fetchUploadedFiles = useCallback(async () => {
     try {
-      const { data, error } = await supabase
+      const sb = getSupabaseClient();
+      if (!sb) return;
+      const { data, error } = await sb
         .from("pdf_documents")
         .select("*")
         .order("created_at", { ascending: false });
@@ -146,7 +148,9 @@ export default function Upload() {
         description: "Detecting if password is required...",
       });
 
-      const { data, error } = await supabase.functions.invoke("check-pdf-password", {
+      const sb = getSupabaseClient();
+      if (!sb) return;
+      const { data, error } = await sb.functions.invoke("check-pdf-password", {
         body: {
           filePath: file.file_path,
           documentId: file.id,
@@ -222,6 +226,16 @@ export default function Upload() {
   const uploadFiles = useCallback(async (files: File[]) => {
     if (!user) return;
 
+    const sb = getSupabaseClient();
+    if (!sb) {
+      toast({
+        variant: "destructive",
+        title: "Backend not configured",
+        description: "Cannot upload files in this environment.",
+      });
+      return;
+    }
+
     setIsUploading(true);
 
     for (const file of files) {
@@ -229,14 +243,14 @@ export default function Upload() {
         const filePath = `${user.id}/${Date.now()}-${file.name}`;
 
         // Upload to storage
-        const { error: uploadError } = await supabase.storage
+        const { error: uploadError } = await sb.storage
           .from("pdf-documents")
           .upload(filePath, file);
 
         if (uploadError) throw uploadError;
 
         // Save metadata to database
-        const { data: docData, error: dbError } = await supabase
+        const { data: docData, error: dbError } = await sb
           .from("pdf_documents")
           .insert({
             user_id: user.id,
@@ -367,7 +381,9 @@ export default function Upload() {
       console.log("[DEBUG] Using password from:", providedPassword ? "providedPassword" : cachedEntry ? "cache" : "none");
 
       // Call parse-pdf with adaptive AI extraction
-      const response = await supabase.functions.invoke("parse-pdf", {
+      const sb = getSupabaseClient();
+      if (!sb) throw new Error("Backend not configured");
+      const response = await sb.functions.invoke("parse-pdf", {
         body: {
           documentId: file.id,
           userId: user.id,
@@ -539,16 +555,19 @@ export default function Upload() {
 
   const deleteFile = async (file: UploadedFile) => {
     try {
+      const sb = getSupabaseClient();
+      if (!sb) throw new Error("Backend not configured");
+
       // Clear any cached password for this file
       delete sessionPasswordCacheRef.current[file.id];
       
       // Delete from storage
-      await supabase.storage
+      await sb.storage
         .from("pdf-documents")
         .remove([file.file_path]);
 
       // Delete from database
-      const { error: dbError } = await supabase
+      const { error: dbError } = await sb
         .from("pdf_documents")
         .delete()
         .eq("id", file.id);

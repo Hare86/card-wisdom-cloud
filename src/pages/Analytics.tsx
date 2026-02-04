@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/safeClient";
+import { getSupabaseClient } from "@/integrations/supabase/lazyClient";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { MobileNav } from "@/components/dashboard/MobileNav";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -96,11 +96,13 @@ export default function Analytics() {
   const fetchAnalytics = useCallback(async () => {
     setLoading(true);
     try {
+      const sb = getSupabaseClient();
+      if (!sb) throw new Error("Backend not configured");
       const [tokenRes, evalRes, compRes, roiRes] = await Promise.all([
-        supabase.functions.invoke("analytics", { body: { action: "token-usage", userId: user?.id } }),
-        supabase.functions.invoke("analytics", { body: { action: "evaluation-metrics", userId: user?.id } }),
-        supabase.functions.invoke("analytics", { body: { action: "compliance-report" } }),
-        supabase.functions.invoke("analytics", { body: { action: "roi-analysis" } }),
+        sb.functions.invoke("analytics", { body: { action: "token-usage", userId: user?.id } }),
+        sb.functions.invoke("analytics", { body: { action: "evaluation-metrics", userId: user?.id } }),
+        sb.functions.invoke("analytics", { body: { action: "compliance-report" } }),
+        sb.functions.invoke("analytics", { body: { action: "roi-analysis" } }),
       ]);
 
       if (tokenRes.data) setTokenUsage(tokenRes.data);
@@ -112,7 +114,9 @@ export default function Analytics() {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to load analytics data",
+        description: error instanceof Error && error.message === "Backend not configured"
+          ? "Backend connection is not configured for this environment."
+          : "Failed to load analytics data",
       });
     } finally {
       setLoading(false);
