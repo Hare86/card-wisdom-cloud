@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getDocument } from "https://esm.sh/pdfjs-serverless@0.7.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,11 +10,11 @@ const corsHeaders = {
 
 // ============================================================================
 // PASSWORD-PROTECTED PDF HANDLING
-// Since pdf-lib and pdf.js don't work reliably in Deno edge functions for
-// password decryption, we use a different approach:
+// Using pdfjs-serverless for password decryption in Deno edge functions
 // 1. Detect if PDF is encrypted (binary markers)
-// 2. If password provided, try to decrypt using external service or AI
-// 3. Return clear error messages for user action
+// 2. If password provided, try to decrypt using pdfjs-serverless
+// 3. Extract text from decrypted PDF, then use AI for structured extraction
+// 4. Return clear error messages for user action
 // ============================================================================
 
 /**
@@ -36,6 +37,57 @@ function isPdfPasswordProtected(pdfData: Uint8Array): boolean {
   }
   
   return isEncrypted;
+}
+
+/**
+ * Decrypt PDF using pdfjs-serverless and extract text
+ * Returns null if decryption fails (wrong password or unsupported encryption)
+ */
+async function decryptAndExtractText(pdfBytes: Uint8Array, password: string): Promise<{ text: string; success: boolean; error?: string }> {
+  try {
+    console.log("[DECRYPT] Attempting to decrypt PDF with pdfjs-serverless...");
+    
+    const document = await getDocument({
+      data: pdfBytes,
+      password: password,
+      useSystemFonts: true,
+    }).promise;
+    
+    console.log(`[DECRYPT] Successfully opened PDF with ${document.numPages} pages`);
+    
+    // Extract text from all pages
+    const textParts: string[] = [];
+    for (let i = 1; i <= document.numPages; i++) {
+      const page = await document.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .filter((item: unknown) => typeof item === "object" && item !== null && "str" in item)
+        .map((item: unknown) => (item as { str: string }).str)
+        .join(" ");
+      textParts.push(pageText);
+    }
+    
+    const fullText = textParts.join("\n\n");
+    console.log(`[DECRYPT] Extracted ${fullText.length} characters from ${document.numPages} pages`);
+    
+    return { text: fullText, success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("[DECRYPT] Decryption failed:", errorMessage);
+    
+    // Check for specific error types
+    if (errorMessage.includes("Incorrect Password") || 
+        errorMessage.includes("incorrect password") ||
+        errorMessage.includes("PasswordException")) {
+      return { text: "", success: false, error: "INVALID_PASSWORD" };
+    }
+    
+    if (errorMessage.includes("encrypted") || errorMessage.includes("Encrypted")) {
+      return { text: "", success: false, error: "ENCRYPTED_UNSUPPORTED" };
+    }
+    
+    return { text: "", success: false, error: "DECRYPT_FAILED" };
+  }
 }
 
 // ============================================================================
@@ -300,22 +352,52 @@ async function extractRawTextFromPDF(
     throw new Error("LOVABLE_API_KEY is not configured");
   }
 
-  // If password is provided, check if PDF is actually encrypted first
-  // Note: AI Gateway cannot decrypt PDFs - the password is informational only
-  // For password-protected PDFs, we need to inform the user to use an unlocked version
+  // If password is provided and PDF is encrypted, try to decrypt with pdfjs-serverless
   if (password && pdfBytes) {
     console.log("[PHASE 1A] Password provided - checking if PDF is encrypted...");
     
     const isEncrypted = isPdfPasswordProtected(pdfBytes);
     
     if (isEncrypted) {
-      console.log("[PHASE 1A] PDF is encrypted - informing user about limitation");
-      // Unfortunately, AI models cannot decrypt password-protected PDFs
-      // The user needs to unlock the PDF using a tool like Adobe Acrobat
+      console.log("[PHASE 1A] PDF is encrypted - attempting decryption with pdfjs-serverless...");
+      
+      const decryptResult = await decryptAndExtractText(pdfBytes, password);
+      
+      if (decryptResult.success && decryptResult.text.length > 100) {
+        console.log(`[PHASE 1A] Decryption successful! Extracted ${decryptResult.text.length} chars`);
+        
+        // Apply local PII masking to the decrypted text
+        const { maskedText, piiTypesFound, fieldsMasked } = maskPII(decryptResult.text);
+        console.log(`[PHASE 1A] Masked ${fieldsMasked} PII fields of types: ${piiTypesFound.join(", ") || "none"}`);
+        
+        return {
+          rawText: maskedText,
+          tokensUsed: { input: 0, output: 0 }, // No AI tokens used for local decryption
+          ocrMaskedTypes: piiTypesFound,
+          extractionMethod: "pdfjs_decryption"
+        };
+      }
+      
+      // Decryption failed - check the error type
+      if (decryptResult.error === "INVALID_PASSWORD") {
+        console.log("[PHASE 1A] Decryption failed - invalid password");
+        const err = new Error("INVALID_PASSWORD");
+        (err as unknown as Record<string, unknown>).pdfErrorInfo = {
+          code: "INVALID_PASSWORD",
+          userMessage: "The password you entered is incorrect. Please try again with the correct password.",
+          suggestedAction: "Re-enter the correct password for this PDF",
+          recoverable: true,
+          requiresPassword: true,
+        };
+        throw err;
+      }
+      
+      // If decryption failed for other reasons (unsupported encryption, etc.)
+      console.log(`[PHASE 1A] Decryption failed: ${decryptResult.error}`);
       const err = new Error("ENCRYPTED_UNSUPPORTED");
       (err as unknown as Record<string, unknown>).pdfErrorInfo = {
         code: "ENCRYPTED_UNSUPPORTED",
-        userMessage: "This PDF is password-protected. AI cannot decrypt PDFs directly. Please unlock the PDF first using Adobe Acrobat or an online PDF unlock tool, then upload the unlocked version.",
+        userMessage: "This PDF uses encryption that cannot be processed. Please unlock the PDF first using Adobe Acrobat or an online PDF unlock tool, then upload the unlocked version.",
         suggestedAction: "Use Adobe Acrobat, Smallpdf, or iLovePDF to remove the password protection, then re-upload",
         recoverable: true,
       };
