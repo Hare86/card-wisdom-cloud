@@ -104,6 +104,7 @@ serve(async (req) => {
       const context = await retrieveContext(supabase, lastMessage, userId, LOVABLE_API_KEY);
       contextSection = buildContextSection(context);
       allContext = [
+        ...(context.userCards ? [context.userCards] : []),
         ...context.documentChunks,
         ...context.benefitsContext,
         ...(context.transactionSummary ? [context.transactionSummary] : []),
