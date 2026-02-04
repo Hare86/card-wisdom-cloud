@@ -251,10 +251,20 @@ function isPdfPasswordProtected(pdfData: Uint8Array): boolean {
 /**
  * Extract text from PDF using AI OCR
  */
-async function extractRawTextFromPDF(
+/**
+ * Single-pass PDF extraction: OCR + structured data in one AI call
+ * Uses faster model for improved performance
+ */
+async function extractPDFDataSinglePass(
   pdfBase64: string,
   pdfBytes: Uint8Array
-): Promise<{ rawText: string; tokensUsed: { input: number; output: number }; ocrMaskedTypes: string[]; extractionMethod: string }> {
+): Promise<{
+  rawText: string;
+  structuredData: ParsedResponse;
+  tokensUsed: { input: number; output: number };
+  ocrMaskedTypes: string[];
+  extractionMethod: string;
+}> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
     throw new Error("LOVABLE_API_KEY is not configured");
@@ -273,30 +283,47 @@ async function extractRawTextFromPDF(
     throw err;
   }
 
-  // Use AI OCR for extraction
-  const ocrWithFilteringPrompt = `TASK: OCR text extraction with MANDATORY PII redaction.
+  // Combined prompt: OCR with PII masking + structured extraction in single pass
+  const combinedPrompt = `TASK: Extract and analyze this credit card statement in a SINGLE pass.
 
-EXTRACT all visible text from this credit card statement PDF.
-PRESERVE structure (headers, tables, line breaks).
+STEP 1 - TEXT EXTRACTION WITH PII REDACTION:
+Extract all visible text while applying these redactions:
+- 16-digit card numbers → XXXX-XXXX-XXXX-[last4]
+- Names after Mr/Mrs/Ms/Dr/Shri/Smt → [HOLDER_NAME]
+- Email addresses → [EMAIL_REDACTED]
+- 10-digit phone numbers → XXXXXX[last4]
+- PAN numbers (ABCDE1234F) → XXXXX****X
 
-MANDATORY REDACTION (apply during extraction):
-- Any 16-digit card numbers → replace with: XXXX-XXXX-XXXX-[last4]
-- Any names after Mr/Mrs/Ms/Dr/Shri/Smt → replace with: [HOLDER_NAME]
-- Any email addresses → replace with: [EMAIL_REDACTED]
-- Any 10-digit phone numbers → replace with: XXXXXX[last4]
-- Any PAN numbers (format: ABCDE1234F) → replace with: XXXXX****X
+STEP 2 - STRUCTURED EXTRACTION:
+From the extracted text, identify and structure:
 
-PRESERVE these fields AS-IS (needed for processing):
-- Merchant names and descriptions
-- Transaction dates
-- Transaction amounts
-- Bank name and card product name
-- Statement period dates
-- Points/rewards information
+Return JSON in this EXACT format:
+{
+  "rawText": "The full extracted text with PII redacted (first 500 chars for reference)",
+  "layoutFeatures": ["header_format", "table_columns", "date_format_used"],
+  "bankName": "Bank name (HDFC, ICICI, Axis, SBI, etc.)",
+  "cardName": "Card product name (Infinia, Regalia, Coral, etc.)",
+  "statementPeriod": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
+  "transactions": [
+    {
+      "date": "YYYY-MM-DD",
+      "description": "Transaction description",
+      "amount": -1234.56,
+      "merchant": "Merchant name"
+    }
+  ],
+  "confidence": 0.85
+}
 
-OUTPUT: Just the extracted text with redactions applied. No commentary.`;
+RULES:
+- Negative amounts for debits/purchases, positive for credits/refunds
+- Parse all date formats to YYYY-MM-DD
+- Extract ALL transactions visible in the statement
+- Confidence: 0.9+ for clear format, 0.7-0.9 standard, <0.7 unclear
+- Return ONLY valid JSON, no markdown`;
 
-  console.log("[EXTRACT] Sending to AI OCR...");
+  console.log("[EXTRACT] Single-pass extraction starting...");
+  const extractStart = Date.now();
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -305,12 +332,12 @@ OUTPUT: Just the extracted text with redactions applied. No commentary.`;
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
+      model: "google/gemini-2.5-flash-lite",
       messages: [
         {
           role: "user",
           content: [
-            { type: "text", text: ocrWithFilteringPrompt },
+            { type: "text", text: combinedPrompt },
             { type: "image_url", image_url: { url: `data:application/pdf;base64,${pdfBase64}` } }
           ]
         }
@@ -322,12 +349,12 @@ OUTPUT: Just the extracted text with redactions applied. No commentary.`;
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error("[EXTRACT] AI OCR error:", response.status, errorText);
-    
-    // Check for password-protected indicators in error
+    console.error("[EXTRACT] AI error:", response.status, errorText);
+
+    // Check for password-protected indicators
     const passwordIndicators = ["no pages", "empty document", "encrypted", "password", "protected"];
     const textLower = errorText.toLowerCase();
-    
+
     if (passwordIndicators.some(indicator => textLower.includes(indicator))) {
       const err = new Error("PASSWORD_REQUIRED");
       (err as unknown as Record<string, unknown>).pdfErrorInfo = {
@@ -338,107 +365,54 @@ OUTPUT: Just the extracted text with redactions applied. No commentary.`;
       };
       throw err;
     }
-    
-    throw new Error(`AI OCR failed: ${response.status}`);
-  }
 
-  const result = await response.json();
-  const rawText = result.choices?.[0]?.message?.content || "";
-  const tokensUsed = {
-    input: result.usage?.prompt_tokens || 0,
-    output: result.usage?.completion_tokens || 0,
-  };
-
-  console.log(`[EXTRACT] Extracted ${rawText.length} chars, tokens: ${tokensUsed.input}/${tokensUsed.output}`);
-
-  // Track which PII types were masked at OCR level
-  const ocrMaskedTypes: string[] = [];
-  if (rawText.includes("XXXX-XXXX-XXXX-")) ocrMaskedTypes.push("credit_card");
-  if (rawText.includes("[HOLDER_NAME]")) ocrMaskedTypes.push("cardholder_name");
-  if (rawText.includes("[EMAIL_REDACTED]")) ocrMaskedTypes.push("email");
-
-  return { rawText, tokensUsed, ocrMaskedTypes, extractionMethod: "ai_ocr" };
-}
-
-/**
- * Extract structured data from masked text using AI
- */
-async function extractStructuredData(
-  maskedText: string
-): Promise<{ data: ParsedResponse; tokensUsed: { input: number; output: number } }> {
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) {
-    throw new Error("LOVABLE_API_KEY is not configured");
-  }
-
-  const extractionPrompt = `Analyze this credit card statement text and extract structured data.
-
-TEXT:
-${maskedText}
-
-EXTRACT and return as JSON:
-{
-  "layoutFeatures": ["list", "of", "structural", "features", "like", "headers", "table_columns", "date_formats"],
-  "bankName": "Bank name (HDFC, ICICI, Axis, SBI, etc.)",
-  "cardName": "Card product name (Infinia, Regalia, etc.)",
-  "statementPeriod": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
-  "transactions": [
-    {
-      "date": "YYYY-MM-DD",
-      "description": "Original transaction description",
-      "amount": 1234.56,
-      "merchant": "Extracted merchant name"
-    }
-  ],
-  "confidence": 0.85
-}
-
-RULES:
-1. Use negative amounts for debits/purchases, positive for credits/refunds
-2. Parse all date formats (DD/MM/YYYY, DD-MMM-YYYY, etc.) to YYYY-MM-DD
-3. Extract merchant from description if not separate
-4. Confidence: 0.9+ if clear format, 0.7-0.9 for standard, <0.7 for unclear
-5. Return ONLY valid JSON, no markdown or explanation`;
-
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [{ role: "user", content: extractionPrompt }],
-      max_tokens: 8000,
-      temperature: 0,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error("[EXTRACT] Structured extraction error:", response.status, errorText);
-    throw new Error(`Structured extraction failed: ${response.status}`);
+    throw new Error(`AI extraction failed: ${response.status}`);
   }
 
   const result = await response.json();
   const content = result.choices?.[0]?.message?.content || "{}";
-  
-  // Parse JSON from response
-  let data: ParsedResponse;
-  try {
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    data = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
-  } catch (e) {
-    console.error("[EXTRACT] JSON parse error:", e);
-    data = {};
-  }
-
   const tokensUsed = {
     input: result.usage?.prompt_tokens || 0,
     output: result.usage?.completion_tokens || 0,
   };
 
-  return { data, tokensUsed };
+  const extractTime = Date.now() - extractStart;
+  console.log(`[EXTRACT] Single-pass complete in ${extractTime}ms, tokens: ${tokensUsed.input}/${tokensUsed.output}`);
+
+  // Parse JSON response
+  let structuredData: ParsedResponse;
+  let rawText = "";
+  try {
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+    rawText = parsed.rawText || content.substring(0, 2000);
+    structuredData = {
+      layoutFeatures: parsed.layoutFeatures || [],
+      bankName: parsed.bankName,
+      cardName: parsed.cardName,
+      statementPeriod: parsed.statementPeriod,
+      transactions: parsed.transactions || [],
+      confidence: parsed.confidence,
+    };
+  } catch (e) {
+    console.error("[EXTRACT] JSON parse error:", e);
+    rawText = content.substring(0, 2000);
+    structuredData = {};
+  }
+
+  // Track PII types masked
+  const ocrMaskedTypes: string[] = [];
+  if (content.includes("XXXX-XXXX-XXXX-")) ocrMaskedTypes.push("credit_card");
+  if (content.includes("[HOLDER_NAME]")) ocrMaskedTypes.push("cardholder_name");
+  if (content.includes("[EMAIL_REDACTED]")) ocrMaskedTypes.push("email");
+
+  return {
+    rawText,
+    structuredData,
+    tokensUsed,
+    ocrMaskedTypes,
+    extractionMethod: "ai_single_pass",
+  };
 }
 
 // ============================================================================
@@ -490,10 +464,10 @@ serve(async (req) => {
 
     console.log(`[PARSE] PDF size: ${pdfBytes.length} bytes`);
 
-    // Extract text from PDF
+    // Single-pass extraction (OCR + structured data)
     let extractionResult;
     try {
-      extractionResult = await extractRawTextFromPDF(pdfBase64, pdfBytes);
+      extractionResult = await extractPDFDataSinglePass(pdfBase64, pdfBytes);
     } catch (error) {
       // Handle password-protected PDF error
       if (error instanceof Error && error.message === "PASSWORD_REQUIRED") {
@@ -511,9 +485,9 @@ serve(async (req) => {
       throw error;
     }
 
-    const { rawText, tokensUsed: ocrTokens, ocrMaskedTypes } = extractionResult;
+    const { rawText, structuredData: extractedData, tokensUsed, ocrMaskedTypes } = extractionResult;
 
-    if (!rawText || rawText.length < 100) {
+    if (!rawText || rawText.length < 50) {
       console.error("[PARSE] Insufficient text extracted");
       return new Response(
         JSON.stringify({
@@ -525,17 +499,20 @@ serve(async (req) => {
       );
     }
 
-    // Apply local PII masking as second layer
-    const { maskedText, piiTypesFound, fieldsMasked } = maskPII(rawText);
+    // Apply local PII masking as additional layer
+    const { piiTypesFound, fieldsMasked } = maskPII(rawText);
     const allPiiTypes = [...new Set([...ocrMaskedTypes, ...piiTypesFound])];
 
     console.log(`[PARSE] PII masked: ${fieldsMasked} fields, types: ${allPiiTypes.join(", ")}`);
 
-    // Extract structured data
-    const { data: extractedData, tokensUsed: extractionTokens } = await extractStructuredData(maskedText);
-
     // Process transactions
-    const transactions: TransactionData[] = (extractedData.transactions || []).map((tx) => {
+    interface RawTransaction {
+      date?: string;
+      description?: string;
+      amount?: number | string;
+      merchant?: string;
+    }
+    const transactions: TransactionData[] = ((extractedData.transactions || []) as RawTransaction[]).map((tx) => {
       const amount = typeof tx.amount === "string" ? parseFloat(tx.amount.replace(/[^0-9.-]/g, "")) : (tx.amount || 0);
       const category = categorizeTransaction(tx.description || tx.merchant || "");
       const detectedCardName = cardName !== "default" ? cardName : (extractedData.cardName || "default");
@@ -622,15 +599,15 @@ serve(async (req) => {
     await supabase.from("extraction_audit_log").insert({
       user_id: userId,
       document_id: documentId,
-      extraction_method: "ai_adaptive",
+      extraction_method: "ai_single_pass",
       extraction_status: "success",
       fields_extracted: transactions.length,
       pii_fields_masked: fieldsMasked,
       confidence_score: extractedData.confidence || 0.8,
       processing_time_ms: processingTime,
-      llm_model_used: "gemini-2.5-flash",
-      llm_tokens_input: ocrTokens.input + extractionTokens.input,
-      llm_tokens_output: ocrTokens.output + extractionTokens.output,
+      llm_model_used: "gemini-2.5-flash-lite",
+      llm_tokens_input: tokensUsed.input,
+      llm_tokens_output: tokensUsed.output,
       password_protected: false,
     });
 
