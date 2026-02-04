@@ -7,7 +7,6 @@ import { MobileNav } from "@/components/dashboard/MobileNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Upload as UploadIcon, 
@@ -531,40 +530,48 @@ export default function Upload() {
                 </label>
               </div>
 
-              {/* Password Notice - Collapsible */}
-              <Collapsible>
-                <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg">
-                  <CollapsibleTrigger className="flex items-center justify-between w-full text-left">
-                    <div className="flex items-center gap-2">
-                      <Lock className="w-4 h-4 text-warning flex-shrink-0" />
-                      <span className="text-sm font-medium text-warning">Have a password-protected PDF?</span>
-                    </div>
-                    <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform duration-200 [&[data-state=open]]:rotate-180" />
-                  </CollapsibleTrigger>
-                  
-                  <CollapsibleContent className="pt-3 mt-3 border-t border-warning/20">
-                    <div className="text-sm space-y-3">
-                      <div className="space-y-1.5">
-                        <p className="font-medium text-foreground text-xs">Quick Unlock (Browser)</p>
-                        <p className="text-xs text-muted-foreground">
-                          Open PDF in browser → Enter password → Press <kbd className="px-1 py-0.5 bg-muted rounded text-[10px] font-mono">Ctrl/Cmd+P</kbd> → Save as PDF
-                        </p>
+              {/* Password Notice - Simple Collapsible */}
+              {(() => {
+                const [isOpen, setIsOpen] = useState(false);
+                return (
+                  <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg">
+                    <button
+                      onClick={() => setIsOpen(!isOpen)}
+                      className="flex items-center justify-between w-full text-left"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Lock className="w-4 h-4 text-warning flex-shrink-0" />
+                        <span className="text-sm font-medium text-warning">Have a password-protected PDF?</span>
                       </div>
-                      <div className="space-y-1.5">
-                        <p className="font-medium text-foreground text-xs">Or use online tool</p>
-                        <a 
-                          href="https://www.ilovepdf.com/unlock_pdf" 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="text-xs underline text-primary hover:text-primary/80"
-                        >
-                          iLovePDF Unlock →
-                        </a>
+                      <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    
+                    {isOpen && (
+                      <div className="pt-3 mt-3 border-t border-warning/20">
+                        <div className="text-sm space-y-3">
+                          <div className="space-y-1.5">
+                            <p className="font-medium text-foreground text-xs">Quick Unlock (Browser)</p>
+                            <p className="text-xs text-muted-foreground">
+                              Open PDF in browser → Enter password → Press <kbd className="px-1 py-0.5 bg-muted rounded text-[10px] font-mono">Ctrl/Cmd+P</kbd> → Save as PDF
+                            </p>
+                          </div>
+                          <div className="space-y-1.5">
+                            <p className="font-medium text-foreground text-xs">Or use online tool</p>
+                            <a 
+                              href="https://www.ilovepdf.com/unlock_pdf" 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-xs underline text-primary hover:text-primary/80"
+                            >
+                              iLovePDF Unlock →
+                            </a>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </CollapsibleContent>
-                </div>
-              </Collapsible>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Security Notice */}
               <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
