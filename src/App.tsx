@@ -16,6 +16,7 @@ import Auth from "./pages/Auth";
 const Upload = lazy(() => import("./pages/Upload"));
 const Analytics = lazy(() => import("./pages/Analytics"));
 const Transactions = lazy(() => import("./pages/Transactions"));
+const Demo = lazy(() => import("./pages/Demo"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -42,6 +43,7 @@ const App = () => (
                 <Route path="/upload" element={<Upload />} />
                 <Route path="/analytics" element={<Analytics />} />
                 <Route path="/transactions" element={<Transactions />} />
+                <Route path="/demo" element={<Demo />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
