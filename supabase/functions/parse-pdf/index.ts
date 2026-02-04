@@ -8,111 +8,6 @@ const corsHeaders = {
 };
 
 // ============================================================================
-// PASSWORD-PROTECTED PDF HANDLING
-// Uses n8n external worker for PDF decryption when password is provided.
-// Flow:
-// 1. Detect if PDF is encrypted (binary markers)
-// 2. If password provided → call n8n webhook to decrypt
-// 3. Continue parsing with unlocked PDF
-// ============================================================================
-
-/**
- * Check if PDF is password-protected by examining binary markers
- */
-function isPdfPasswordProtected(pdfData: Uint8Array): boolean {
-  // Check first 50KB for encryption markers
-  const checkLength = Math.min(pdfData.length, 50000);
-  const text = new TextDecoder("latin1").decode(pdfData.slice(0, checkLength));
-  
-  // PDF encryption indicators
-  const isEncrypted = text.includes("/Encrypt") || 
-                      text.includes("/Filter/Standard") ||
-                      text.includes("/Filter /Standard") ||
-                      (text.includes("/U ") && text.includes("/O ")) || // User/Owner password objects
-                      text.includes("/Crypt");
-  
-  if (isEncrypted) {
-    console.log("[PDF-CHECK] Detected encryption markers in PDF binary");
-  }
-  
-  return isEncrypted;
-}
-
-/**
- * Decrypt password-protected PDF using n8n external worker
- * Returns decrypted PDF as base64 string
- */
-async function decryptPdfViaN8n(
-  pdfBase64: string,
-  password: string
-): Promise<{ success: boolean; unlockedPdfBase64?: string; error?: string }> {
-  const N8N_DECRYPT_WEBHOOK_URL = Deno.env.get("N8N_DECRYPT_WEBHOOK_URL");
-  
-  if (!N8N_DECRYPT_WEBHOOK_URL) {
-    console.log("[DECRYPT] N8N_DECRYPT_WEBHOOK_URL not configured - falling back to manual unlock guidance");
-    return { 
-      success: false, 
-      error: "DECRYPT_NOT_CONFIGURED" 
-    };
-  }
-
-  console.log("[DECRYPT] Calling n8n decrypt webhook...");
-
-  try {
-    const response = await fetch(N8N_DECRYPT_WEBHOOK_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        pdfBase64,
-        password,
-      }),
-    });
-
-    if (!response.ok) {
-      console.error("[DECRYPT] n8n webhook error:", response.status);
-      return { 
-        success: false, 
-        error: `Decrypt service error: ${response.status}` 
-      };
-    }
-
-    const result = await response.json();
-    
-    if (result.success && result.unlockedPdfBase64) {
-      console.log("[DECRYPT] PDF decrypted successfully via n8n");
-      return {
-        success: true,
-        unlockedPdfBase64: result.unlockedPdfBase64,
-      };
-    }
-
-    // Handle specific error codes from n8n
-    if (result.error === "WRONG_PASSWORD") {
-      return { success: false, error: "WRONG_PASSWORD" };
-    }
-    if (result.error === "NOT_ENCRYPTED") {
-      return { success: false, error: "NOT_ENCRYPTED" };
-    }
-
-    return { 
-      success: false, 
-      error: result.message || "Decryption failed" 
-    };
-
-  } catch (error) {
-    console.error("[DECRYPT] n8n webhook call failed:", error);
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : "Network error" 
-    };
-  }
-}
-
-// ============================================================================
-// PII MASKING - GDPR/PCI-DSS COMPLIANT
-// All patterns designed to detect and mask sensitive data
 // PII MASKING - GDPR/PCI-DSS COMPLIANT
 // All patterns designed to detect and mask sensitive data
 // ============================================================================
@@ -132,7 +27,6 @@ function maskPII(text: string): { maskedText: string; piiTypesFound: string[]; f
   const piiTypesFound: string[] = [];
   let fieldsMasked = 0;
 
-  // Order matters - mask credit cards before generic numbers
   const creditCardMatches = maskedText.match(PII_PATTERNS.creditCard);
   if (creditCardMatches) {
     piiTypesFound.push("credit_card");
@@ -218,10 +112,8 @@ interface TransactionData {
   points?: number;
 }
 
-// Generate a structural hash for template matching (NO PII - just layout patterns)
 function generateTemplateHash(structuralFeatures: string[]): string {
   const sorted = structuralFeatures.sort().join("|");
-  // Simple hash - in production use proper crypto hash
   let hash = 0;
   for (let i = 0; i < sorted.length; i++) {
     const char = sorted.charCodeAt(i);
@@ -231,7 +123,6 @@ function generateTemplateHash(structuralFeatures: string[]): string {
   return Math.abs(hash).toString(16).padStart(8, "0");
 }
 
-// Intelligent category detection
 function categorizeTransaction(description: string): string {
   const desc = description.toLowerCase();
   
@@ -257,7 +148,6 @@ function categorizeTransaction(description: string): string {
   return "Other";
 }
 
-// Calculate reward points based on card and category
 function calculatePoints(amount: number, category: string, cardName: string): number {
   const rewardRates: Record<string, Record<string, number>> = {
     "Infinia": { "Travel": 5, "Dining": 3, "Shopping": 2, "Fuel": 1, "Other": 1 },
@@ -282,7 +172,6 @@ function calculatePoints(amount: number, category: string, cardName: string): nu
   return Math.floor((amount / 100) * rate);
 }
 
-// Name validation (security requirement)
 const NAME_VALIDATION = {
   minLength: 2,
   maxLength: 100,
@@ -293,7 +182,6 @@ const NAME_VALIDATION = {
 function sanitizeName(name: string): string {
   if (!name) return "";
   let sanitized = name.trim().replace(/\s+/g, " ");
-  // Remove any potential XSS or injection characters
   sanitized = sanitized.replace(/[<>"'`;\\]/g, "");
   if (sanitized.length > NAME_VALIDATION.maxLength) {
     sanitized = sanitized.substring(0, NAME_VALIDATION.maxLength);
@@ -320,18 +208,15 @@ function validateName(name: string, type: "card" | "bank" | "cardholder"): { isV
 }
 
 // ============================================================================
-// PRE-LLM PII MASKING - GDPR/PCI-DSS STRICT COMPLIANCE
-// Two-layer protection: 1) OCR extraction with in-prompt filtering, 2) Comprehensive local masking
+// PDF TEXT EXTRACTION
 // ============================================================================
 
-interface PreExtractionResult {
-  maskedText: string;
-  piiTypesFound: string[];
-  totalPiiMasked: number;
-  rawTextLength: number;
-  extractionMethod: "ocr_with_inline_filter" | "structured_extraction";
-  auditTrail: PIIAuditEntry[];
-  ocrTokensUsed: { input: number; output: number };
+interface PIIAuditEntry {
+  stage: "ocr_inline" | "pre_llm_local" | "post_llm";
+  piiType: string;
+  count: number;
+  action: "masked" | "redacted" | "filtered_at_source";
+  timestamp: string;
 }
 
 interface ParsedResponse {
@@ -343,91 +228,52 @@ interface ParsedResponse {
   confidence?: number;
 }
 
-interface PIIAuditEntry {
-  stage: "ocr_inline" | "pre_llm_local" | "post_llm";
-  piiType: string;
-  count: number;
-  action: "masked" | "redacted" | "filtered_at_source";
-  timestamp: string;
+/**
+ * Check if PDF is password-protected by examining binary markers
+ */
+function isPdfPasswordProtected(pdfData: Uint8Array): boolean {
+  const checkLength = Math.min(pdfData.length, 50000);
+  const text = new TextDecoder("latin1").decode(pdfData.slice(0, checkLength));
+  
+  const isEncrypted = text.includes("/Encrypt") || 
+                      text.includes("/Filter/Standard") ||
+                      text.includes("/Filter /Standard") ||
+                      (text.includes("/U ") && text.includes("/O ")) ||
+                      text.includes("/Crypt");
+  
+  if (isEncrypted) {
+    console.log("[PDF-CHECK] Detected encryption markers in PDF binary");
+  }
+  
+  return isEncrypted;
 }
 
 /**
- * PHASE 1A: Smart text extraction - uses local pdf.js for password-protected PDFs,
- * falls back to AI OCR for regular PDFs (better at handling image-based content)
- * 
- * Flow:
- * 1. If password provided → use local pdf.js decryption
- * 2. If no password → try AI OCR first (handles image PDFs better)
- * 3. If AI OCR fails with "no pages" → PDF is encrypted, throw PASSWORD_REQUIRED
- * 
- * Returns both raw text and tokens used for audit purposes
+ * Extract text from PDF using AI OCR
  */
 async function extractRawTextFromPDF(
   pdfBase64: string,
-  password?: string,
-  pdfBytes?: Uint8Array
+  pdfBytes: Uint8Array
 ): Promise<{ rawText: string; tokensUsed: { input: number; output: number }; ocrMaskedTypes: string[]; extractionMethod: string }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
     throw new Error("LOVABLE_API_KEY is not configured");
   }
 
-  // If password is provided and PDF is encrypted, try n8n decryption first
-  if (password && pdfBytes) {
-    console.log("[PHASE 1A] Password provided - checking if PDF is encrypted...");
-    
-    const isEncrypted = isPdfPasswordProtected(pdfBytes);
-    
-    if (isEncrypted) {
-      console.log("[PHASE 1A] PDF is encrypted - attempting n8n decryption...");
-      
-      // Try to decrypt via n8n external worker
-      const decryptResult = await decryptPdfViaN8n(pdfBase64, password);
-      
-      if (decryptResult.success && decryptResult.unlockedPdfBase64) {
-        // Successfully decrypted! Use the unlocked PDF for extraction
-        console.log("[PHASE 1A] Using decrypted PDF for OCR extraction");
-        pdfBase64 = decryptResult.unlockedPdfBase64;
-        // Continue to OCR extraction below with unlocked PDF
-      } else if (decryptResult.error === "WRONG_PASSWORD") {
-        const err = new Error("WRONG_PASSWORD");
-        (err as unknown as Record<string, unknown>).pdfErrorInfo = {
-          code: "WRONG_PASSWORD",
-          userMessage: "The password you entered is incorrect. Please try again with the correct password.",
-          recoverable: true,
-        };
-        throw err;
-      } else if (decryptResult.error === "DECRYPT_NOT_CONFIGURED") {
-        // n8n not configured - fall back to manual unlock guidance
-        console.log("[PHASE 1A] n8n decrypt not configured - showing manual unlock guide");
-        const err = new Error("ENCRYPTED_UNSUPPORTED");
-        (err as unknown as Record<string, unknown>).pdfErrorInfo = {
-          code: "ENCRYPTED_UNSUPPORTED",
-          userMessage: "This PDF is password-protected. Please use an online PDF unlock tool to remove the password protection, then re-upload the unlocked file.",
-          suggestedAction: "Use iLovePDF (https://www.ilovepdf.com/unlock_pdf), Smallpdf, or Adobe Acrobat to unlock the PDF first",
-          recoverable: true,
-        };
-        throw err;
-      } else {
-        // General decryption failure
-        console.error("[PHASE 1A] Decryption failed:", decryptResult.error);
-        const err = new Error("DECRYPT_FAILED");
-        (err as unknown as Record<string, unknown>).pdfErrorInfo = {
-          code: "DECRYPT_FAILED",
-          userMessage: `Failed to decrypt PDF: ${decryptResult.error}. Please try unlocking the PDF manually.`,
-          suggestedAction: "Use iLovePDF or Adobe Acrobat to unlock the PDF first",
-          recoverable: true,
-        };
-        throw err;
-      }
-    } else {
-      // PDF has password in request but isn't actually encrypted - proceed normally
-      console.log("[PHASE 1A] PDF is not encrypted despite password being provided, proceeding with OCR");
-    }
+  // Check if PDF is password-protected
+  if (isPdfPasswordProtected(pdfBytes)) {
+    console.log("[EXTRACT] PDF is password-protected - rejecting");
+    const err = new Error("PASSWORD_REQUIRED");
+    (err as unknown as Record<string, unknown>).pdfErrorInfo = {
+      code: "PASSWORD_REQUIRED",
+      userMessage: "This PDF is password-protected. Please unlock it before uploading.",
+      suggestedAction: "Use iLovePDF or Adobe Acrobat to unlock the PDF first",
+      recoverable: false,
+    };
+    throw err;
   }
 
-  // No password - use AI OCR (better for image-based PDFs)
-  // CRITICAL: OCR prompt with MANDATORY PII filtering at extraction time
+  // Use AI OCR for extraction
   const ocrWithFilteringPrompt = `TASK: OCR text extraction with MANDATORY PII redaction.
 
 EXTRACT all visible text from this credit card statement PDF.
@@ -437,16 +283,20 @@ MANDATORY REDACTION (apply during extraction):
 - Any 16-digit card numbers → replace with: XXXX-XXXX-XXXX-[last4]
 - Any names after Mr/Mrs/Ms/Dr/Shri/Smt → replace with: [HOLDER_NAME]
 - Any email addresses → replace with: [EMAIL_REDACTED]
-- Any phone numbers (10+ digits) → replace with: [PHONE_REDACTED]
-- Any 12-digit Aadhaar numbers → replace with: [AADHAAR_REDACTED]
-- Any PAN (5 letters + 4 digits + 1 letter) → replace with: [PAN_REDACTED]
-- Any account numbers (9-18 digits after "account/a/c") → replace with: [ACCT_REDACTED]
-- Any addresses with PIN codes → replace address portion with: [ADDRESS_REDACTED]
+- Any 10-digit phone numbers → replace with: XXXXXX[last4]
+- Any PAN numbers (format: ABCDE1234F) → replace with: XXXXX****X
 
-OUTPUT: Only extracted text with redactions applied. No explanations.
-If password-protected without valid password: PASSWORD_REQUIRED`;
+PRESERVE these fields AS-IS (needed for processing):
+- Merchant names and descriptions
+- Transaction dates
+- Transaction amounts
+- Bank name and card product name
+- Statement period dates
+- Points/rewards information
 
-  console.log("[PHASE 1A] OCR extraction with inline PII filtering...");
+OUTPUT: Just the extracted text with redactions applied. No commentary.`;
+
+  console.log("[EXTRACT] Sending to AI OCR...");
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -455,579 +305,100 @@ If password-protected without valid password: PASSWORD_REQUIRED`;
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash-lite", // Fast, minimal model for OCR
+      model: "google/gemini-2.5-flash",
       messages: [
-        { role: "user", content: [
-          { type: "text", text: ocrWithFilteringPrompt },
-          { type: "image_url", image_url: { url: `data:application/pdf;base64,${pdfBase64}` } }
-        ]}
+        {
+          role: "user",
+          content: [
+            { type: "text", text: ocrWithFilteringPrompt },
+            { type: "image_url", image_url: { url: `data:application/pdf;base64,${pdfBase64}` } }
+          ]
+        }
       ],
       max_tokens: 16000,
-      temperature: 0, // Zero temperature for consistent extraction
+      temperature: 0,
     }),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error("[PHASE 1A] OCR extraction error:", response.status, errorText);
-
-    // Authentication errors
-    if (response.status === 401) {
-      console.error("[PHASE 1A] API authentication failed - check LOVABLE_API_KEY configuration");
-      throw new Error("API authentication failed. Please contact support to configure API access.");
+    console.error("[EXTRACT] AI OCR error:", response.status, errorText);
+    
+    // Check for password-protected indicators in error
+    const passwordIndicators = ["no pages", "empty document", "encrypted", "password", "protected"];
+    const textLower = errorText.toLowerCase();
+    
+    if (passwordIndicators.some(indicator => textLower.includes(indicator))) {
+      const err = new Error("PASSWORD_REQUIRED");
+      (err as unknown as Record<string, unknown>).pdfErrorInfo = {
+        code: "PASSWORD_REQUIRED",
+        userMessage: "This PDF is password-protected. Please unlock it before uploading.",
+        suggestedAction: "Use iLovePDF or Adobe Acrobat to unlock the PDF first",
+        recoverable: false,
+      };
+      throw err;
     }
-
-    // Detect password-protected PDF: AI Gateway returns "no pages" when PDF is encrypted
-    if (response.status === 400 && (
-      errorText.includes("no pages") ||
-      errorText.includes("document has no pages") ||
-      errorText.includes("empty document") ||
-      errorText.includes("cannot be opened") ||
-      errorText.includes("encrypted") ||
-      errorText.includes("password")
-    )) {
-      console.log("[PHASE 1A] Detected password-protected PDF - prompting for password");
-      throw new Error("PASSWORD_REQUIRED");
-    }
-
-    if (response.status === 429) {
-      throw new Error("Rate limit exceeded. Please try again in a few minutes.");
-    }
-    throw new Error(`OCR extraction failed with status ${response.status}`);
+    
+    throw new Error(`AI OCR failed: ${response.status}`);
   }
 
   const result = await response.json();
-  const content = result.choices?.[0]?.message?.content || "";
+  const rawText = result.choices?.[0]?.message?.content || "";
   const tokensUsed = {
     input: result.usage?.prompt_tokens || 0,
     output: result.usage?.completion_tokens || 0,
   };
-  
-  if (content.includes("PASSWORD_REQUIRED")) {
-    throw new Error("PASSWORD_REQUIRED");
-  }
 
-  // Detect which PII types were masked at OCR stage by checking for placeholders
+  console.log(`[EXTRACT] Extracted ${rawText.length} chars, tokens: ${tokensUsed.input}/${tokensUsed.output}`);
+
+  // Track which PII types were masked at OCR level
   const ocrMaskedTypes: string[] = [];
-  if (content.includes("[HOLDER_NAME]")) ocrMaskedTypes.push("name_ocr");
-  if (content.includes("[EMAIL_REDACTED]")) ocrMaskedTypes.push("email_ocr");
-  if (content.includes("[PHONE_REDACTED]")) ocrMaskedTypes.push("phone_ocr");
-  if (content.includes("[AADHAAR_REDACTED]")) ocrMaskedTypes.push("aadhaar_ocr");
-  if (content.includes("[PAN_REDACTED]")) ocrMaskedTypes.push("pan_ocr");
-  if (content.includes("[ACCT_REDACTED]")) ocrMaskedTypes.push("account_ocr");
-  if (content.includes("[ADDRESS_REDACTED]")) ocrMaskedTypes.push("address_ocr");
-  if (/XXXX-XXXX-XXXX-\d{4}/.test(content)) ocrMaskedTypes.push("card_ocr");
+  if (rawText.includes("XXXX-XXXX-XXXX-")) ocrMaskedTypes.push("credit_card");
+  if (rawText.includes("[HOLDER_NAME]")) ocrMaskedTypes.push("cardholder_name");
+  if (rawText.includes("[EMAIL_REDACTED]")) ocrMaskedTypes.push("email");
 
-  console.log(`[PHASE 1A] OCR extracted ${content.length} chars, inline-masked types: ${ocrMaskedTypes.join(", ") || "none detected"}`);
-  return { rawText: content, tokensUsed, ocrMaskedTypes, extractionMethod: "ai_ocr_with_pii_filter" };
-}
-
-// ============================================================================
-// PDF ERROR DETECTION - Comprehensive error handling for edge cases
-// ============================================================================
-
-interface PDFErrorInfo {
-  code: string;
-  message: string;
-  userMessage: string;
-  recoverable: boolean;
-  suggestedAction?: string;
-}
-
-const PDF_ERROR_CODES = {
-  CORRUPTED_FILE: "CORRUPTED_FILE",
-  INVALID_STRUCTURE: "INVALID_STRUCTURE",
-  UNSUPPORTED_VERSION: "UNSUPPORTED_VERSION",
-  ENCRYPTED_UNSUPPORTED: "ENCRYPTED_UNSUPPORTED",
-  PASSWORD_REQUIRED: "PASSWORD_REQUIRED",
-  INVALID_PASSWORD: "INVALID_PASSWORD",
-  EMPTY_DOCUMENT: "EMPTY_DOCUMENT",
-  NO_TEXT_CONTENT: "PDF_TEXT_EXTRACTION_EMPTY",
-  PARSE_TIMEOUT: "PARSE_TIMEOUT",
-  FILE_TOO_LARGE: "FILE_TOO_LARGE",
-  UNKNOWN_ERROR: "UNKNOWN_ERROR",
-} as const;
-
-/**
- * Classify pdf.js errors into user-friendly error categories
- */
-function classifyPDFError(err: unknown): PDFErrorInfo {
-  const msg = err instanceof Error ? err.message : String(err);
-  const name = err && typeof err === "object" ? (err as unknown as { name?: string }).name : undefined;
-  const msgLower = msg.toLowerCase();
-
-  // Password-related errors
-  if (name === "PasswordException" || msgLower.includes("password")) {
-    if (msgLower.includes("incorrect") || msgLower.includes("wrong") || msgLower.includes("invalid")) {
-      return {
-        code: PDF_ERROR_CODES.INVALID_PASSWORD,
-        message: msg,
-        userMessage: "The password you entered is incorrect. Please try again.",
-        recoverable: true,
-        suggestedAction: "Enter the correct password",
-      };
-    }
-    return {
-      code: PDF_ERROR_CODES.PASSWORD_REQUIRED,
-      message: msg,
-      userMessage: "This PDF is password protected. Please provide the password.",
-      recoverable: true,
-      suggestedAction: "Enter the PDF password",
-    };
-  }
-
-  // Corrupted file errors
-  if (
-    msgLower.includes("invalid pdf") ||
-    msgLower.includes("not a pdf") ||
-    msgLower.includes("missing pdf") ||
-    msgLower.includes("pdf header") ||
-    msgLower.includes("startxref") ||
-    msgLower.includes("xref") ||
-    msgLower.includes("trailer") ||
-    msgLower.includes("eof marker") ||
-    msgLower.includes("stream not found") ||
-    msgLower.includes("unexpected end")
-  ) {
-    return {
-      code: PDF_ERROR_CODES.CORRUPTED_FILE,
-      message: msg,
-      userMessage: "This PDF file appears to be corrupted or incomplete. Please try downloading the statement again from your bank.",
-      recoverable: false,
-      suggestedAction: "Download a fresh copy of the PDF from your bank",
-    };
-  }
-
-  // Invalid structure errors
-  if (
-    msgLower.includes("invalid object") ||
-    msgLower.includes("bad xref") ||
-    msgLower.includes("object stream") ||
-    msgLower.includes("linearization") ||
-    msgLower.includes("catalog") ||
-    msgLower.includes("root object")
-  ) {
-    return {
-      code: PDF_ERROR_CODES.INVALID_STRUCTURE,
-      message: msg,
-      userMessage: "This PDF has an unsupported structure. Some bank statements use specialized formatting that we cannot process. Please try uploading a different format if available.",
-      recoverable: false,
-      suggestedAction: "Request a different format from your bank",
-    };
-  }
-
-  // Unsupported encryption
-  if (
-    msgLower.includes("unsupported encryption") ||
-    msgLower.includes("encryption method") ||
-    msgLower.includes("aes-256") ||
-    msgLower.includes("security handler")
-  ) {
-    return {
-      code: PDF_ERROR_CODES.ENCRYPTED_UNSUPPORTED,
-      message: msg,
-      userMessage: "This PDF uses an encryption method we don't support. Please try exporting an unencrypted version from your bank portal.",
-      recoverable: false,
-      suggestedAction: "Download an unencrypted PDF from your bank",
-    };
-  }
-
-  // Empty document
-  if (
-    msgLower.includes("no pages") ||
-    msgLower.includes("empty document") ||
-    msgLower.includes("zero pages") ||
-    msgLower.includes("numpages is 0")
-  ) {
-    return {
-      code: PDF_ERROR_CODES.EMPTY_DOCUMENT,
-      message: msg,
-      userMessage: "This PDF appears to be empty or has no readable pages. Please ensure you uploaded the correct file.",
-      recoverable: false,
-      suggestedAction: "Verify you uploaded the correct file",
-    };
-  }
-
-  // Unsupported PDF version
-  if (
-    msgLower.includes("pdf version") ||
-    msgLower.includes("unsupported version")
-  ) {
-    return {
-      code: PDF_ERROR_CODES.UNSUPPORTED_VERSION,
-      message: msg,
-      userMessage: "This PDF uses a version we don't fully support. The extraction may be incomplete.",
-      recoverable: true,
-      suggestedAction: "Try re-saving the PDF with a different tool",
-    };
-  }
-
-  // File size issues
-  if (
-    msgLower.includes("too large") ||
-    msgLower.includes("memory") ||
-    msgLower.includes("allocation failed")
-  ) {
-    return {
-      code: PDF_ERROR_CODES.FILE_TOO_LARGE,
-      message: msg,
-      userMessage: "This PDF is too large to process. Please try uploading a smaller file (under 20MB) or split the statement into multiple files.",
-      recoverable: false,
-      suggestedAction: "Upload a smaller PDF file",
-    };
-  }
-
-  // Timeout
-  if (
-    msgLower.includes("timeout") ||
-    msgLower.includes("timed out") ||
-    msgLower.includes("deadline exceeded")
-  ) {
-    return {
-      code: PDF_ERROR_CODES.PARSE_TIMEOUT,
-      message: msg,
-      userMessage: "Processing took too long. Please try again with a smaller file or during off-peak hours.",
-      recoverable: true,
-      suggestedAction: "Try again later or with a smaller file",
-    };
-  }
-
-  // Default unknown error
-  return {
-    code: PDF_ERROR_CODES.UNKNOWN_ERROR,
-    message: msg,
-    userMessage: "We encountered an unexpected error processing this PDF. Please try again or contact support if the issue persists.",
-    recoverable: true,
-    suggestedAction: "Try uploading again",
-  };
+  return { rawText, tokensUsed, ocrMaskedTypes, extractionMethod: "ai_ocr" };
 }
 
 /**
- * Validate PDF file before attempting to parse
- * Quick checks to catch obviously corrupted files early
+ * Extract structured data from masked text using AI
  */
-function validatePDFBytes(pdfBytes: Uint8Array): { valid: boolean; error?: PDFErrorInfo } {
-  // Check minimum size (a valid PDF is at least ~100 bytes)
-  if (pdfBytes.length < 100) {
-    return {
-      valid: false,
-      error: {
-        code: PDF_ERROR_CODES.CORRUPTED_FILE,
-        message: "File too small to be a valid PDF",
-        userMessage: "This file is too small to be a valid PDF. Please ensure you uploaded the correct file.",
-        recoverable: false,
-      },
-    };
-  }
-
-  // Check PDF header magic bytes (%PDF-)
-  const header = new TextDecoder().decode(pdfBytes.slice(0, 8));
-  if (!header.startsWith("%PDF-")) {
-    return {
-      valid: false,
-      error: {
-        code: PDF_ERROR_CODES.CORRUPTED_FILE,
-        message: `Invalid PDF header: ${header.slice(0, 8)}`,
-        userMessage: "This file doesn't appear to be a valid PDF. Please ensure you uploaded a PDF file.",
-        recoverable: false,
-      },
-    };
-  }
-
-  // Check for truncated file (should end with %%EOF or close to it)
-  const tailSize = Math.min(1024, pdfBytes.length);
-  const tail = new TextDecoder().decode(pdfBytes.slice(-tailSize));
-  if (!tail.includes("%%EOF")) {
-    console.warn("[PDF VALIDATION] Warning: PDF may be truncated (no %%EOF found)");
-    // Don't fail here, as some PDFs work without proper EOF marker
-  }
-
-  // Check file size limit (20MB)
-  const MAX_SIZE = 20 * 1024 * 1024;
-  if (pdfBytes.length > MAX_SIZE) {
-    return {
-      valid: false,
-      error: {
-        code: PDF_ERROR_CODES.FILE_TOO_LARGE,
-        message: `File size ${(pdfBytes.length / 1024 / 1024).toFixed(2)}MB exceeds limit`,
-        userMessage: `This PDF is too large (${(pdfBytes.length / 1024 / 1024).toFixed(1)}MB). Please upload a file under 20MB.`,
-        recoverable: false,
-      },
-    };
-  }
-
-  return { valid: true };
-}
-
-
-/**
- * PHASE 1B: Comprehensive LOCAL PII masking (no API calls)
- * Defense-in-depth: catches any PII missed by OCR inline filtering
- */
-function applyComprehensivePIIMasking(
-  text: string,
-  ocrMaskedTypes: string[],
-  ocrTokensUsed: { input: number; output: number }
-): PreExtractionResult {
-  let maskedText = text;
-  const piiTypesFound: string[] = [...ocrMaskedTypes];
-  let totalPiiMasked = ocrMaskedTypes.length; // Start with OCR-masked count
-  const auditTrail: PIIAuditEntry[] = [];
-  const timestamp = new Date().toISOString();
-
-  // Log OCR-stage masking in audit trail
-  for (const ocrType of ocrMaskedTypes) {
-    auditTrail.push({
-      stage: "ocr_inline",
-      piiType: ocrType,
-      count: 1,
-      action: "filtered_at_source",
-      timestamp,
-    });
-  }
-
-  // Extended PII patterns for comprehensive LOCAL masking - ordered by specificity
-  const comprehensivePatterns: Record<string, { pattern: RegExp; replacement: string; priority: number }> = {
-    // Credit/Debit cards - most specific first
-    creditCard: {
-      pattern: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g,
-      replacement: "XXXX-XXXX-XXXX-****",
-      priority: 1,
-    },
-    maskedCardPartial: {
-      pattern: /\bXXXX[-\s]?XXXX[-\s]?XXXX[-\s]?\d{4}\b/g,
-      replacement: "XXXX-XXXX-XXXX-****",
-      priority: 1,
-    },
-    // Government IDs
-    aadhaar: {
-      pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g,
-      replacement: "XXXX-XXXX-****",
-      priority: 2,
-    },
-    pan: {
-      pattern: /\b[A-Z]{5}\d{4}[A-Z]\b/g,
-      replacement: "XXXXX****X",
-      priority: 2,
-    },
-    passport: {
-      pattern: /\b[A-Z]\d{7}\b/g,
-      replacement: "X*******",
-      priority: 2,
-    },
-    // Contact info
-    email: {
-      pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
-      replacement: "[EMAIL_MASKED]",
-      priority: 2,
-    },
-    phone: {
-      pattern: /\b(?:\+91[-\s]?)?[6-9]\d{9}\b/g,
-      replacement: "XXXXXX****",
-      priority: 2,
-    },
-    phoneWithCode: {
-      pattern: /\b(?:\+\d{1,3}[-\s]?)?\(?\d{2,4}\)?[-\s]?\d{3,4}[-\s]?\d{4}\b/g,
-      replacement: "[PHONE_MASKED]",
-      priority: 2,
-    },
-    // Financial
-    accountNumber: {
-      pattern: /(?:A\/C|Account|Acct)[:\s#]*\d{9,18}/gi,
-      replacement: "Account: XXXXXXXXXX",
-      priority: 3,
-    },
-    ifsc: {
-      pattern: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g,
-      replacement: "XXXX0XXXXXX",
-      priority: 3,
-    },
-    cvv: {
-      pattern: /\bCVV[:\s]*\d{3,4}\b/gi,
-      replacement: "CVV: XXX",
-      priority: 3,
-    },
-    bankAccountGeneric: {
-      pattern: /\b\d{9,18}\b/g,
-      replacement: "XXXXXX**",
-      priority: 3,
-    },
-    // Customer identifiers
-    customerId: {
-      pattern: /(?:customer|client|member|user)[:\s#]*[A-Z0-9]{6,15}/gi,
-      replacement: "Customer ID: XXXXXX",
-      priority: 4,
-    },
-    referenceNumber: {
-      pattern: /(?:ref|reference|txn|transaction)[:\s#]*[A-Z0-9]{8,20}/gi,
-      replacement: "Ref: XXXXXXXX",
-      priority: 4,
-    },
-    // Personal identifiers
-    fullName: {
-      pattern: /\b(?:Mr\.?|Mrs\.?|Ms\.?|Dr\.?|Shri|Smt\.?|Kumari?)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/g,
-      replacement: "[CARDHOLDER_NAME]",
-      priority: 5,
-    },
-    // Normalize OCR-masked placeholders
-    ocrMaskedName: {
-      pattern: /\[HOLDER_NAME\]/g,
-      replacement: "[CARDHOLDER_NAME]",
-      priority: 6,
-    },
-    ocrMaskedEmail: {
-      pattern: /\[EMAIL_REDACTED\]/g,
-      replacement: "[EMAIL_MASKED]",
-      priority: 6,
-    },
-    ocrMaskedPhone: {
-      pattern: /\[PHONE_REDACTED\]/g,
-      replacement: "[PHONE_MASKED]",
-      priority: 6,
-    },
-    ocrMaskedAadhaar: {
-      pattern: /\[AADHAAR_REDACTED\]/g,
-      replacement: "[AADHAAR_MASKED]",
-      priority: 6,
-    },
-    ocrMaskedPan: {
-      pattern: /\[PAN_REDACTED\]/g,
-      replacement: "[PAN_MASKED]",
-      priority: 6,
-    },
-    ocrMaskedAcct: {
-      pattern: /\[ACCT_REDACTED\]/g,
-      replacement: "[ACCOUNT_MASKED]",
-      priority: 6,
-    },
-    ocrMaskedAddress: {
-      pattern: /\[ADDRESS_REDACTED\]/g,
-      replacement: "[ADDRESS_MASKED]",
-      priority: 6,
-    },
-    // Address patterns
-    address: {
-      pattern: /\b\d+[,\s]+[A-Za-z\s]+(?:Road|Street|Lane|Avenue|Nagar|Colony|Apartment|Flat|Block|Sector)[,\s]+[A-Za-z\s]+(?:,\s*\d{6})?\b/gi,
-      replacement: "[ADDRESS_MASKED]",
-      priority: 5,
-    },
-    pinCode: {
-      pattern: /\b(?:PIN|Pincode|Pin Code)[:\s]*\d{6}\b/gi,
-      replacement: "PIN: XXXXXX",
-      priority: 5,
-    },
-    // Date of Birth
-    dob: {
-      pattern: new RegExp('\\b(?:DOB|Date of Birth|D\\.O\\.B\\.?|Birth Date)[:\\s]*\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b', 'gi'),
-      replacement: "DOB: XX/XX/XXXX",
-      priority: 5,
-    },
-  };
-
-  // Sort patterns by priority and apply
-  const sortedPatterns = Object.entries(comprehensivePatterns)
-    .sort(([, a], [, b]) => a.priority - b.priority);
-
-  for (const [piiType, { pattern, replacement }] of sortedPatterns) {
-    const matches = maskedText.match(pattern);
-    if (matches && matches.length > 0) {
-      if (!piiTypesFound.includes(piiType)) {
-        piiTypesFound.push(piiType);
-      }
-      totalPiiMasked += matches.length;
-      
-      // Create audit entry for local masking stage
-      auditTrail.push({
-        stage: "pre_llm_local",
-        piiType,
-        count: matches.length,
-        action: "masked",
-        timestamp,
-      });
-      
-      maskedText = maskedText.replace(pattern, replacement);
-    }
-  }
-
-  console.log(`[PHASE 1B] Local PII masking: ${totalPiiMasked} total instances, ${piiTypesFound.length} PII types`);
-
-  return {
-    maskedText,
-    piiTypesFound,
-    totalPiiMasked,
-    rawTextLength: text.length,
-    extractionMethod: "ocr_with_inline_filter",
-    auditTrail,
-    ocrTokensUsed,
-  };
-}
-
-// ============================================================================
-// ADAPTIVE AI EXTRACTION - Works with ANY bank statement template
-// Now receives FULLY PRE-MASKED text (two-layer protection)
-// ============================================================================
-
-async function extractWithAdaptiveAI(
-  maskedText: string,
-  preMaskingStats: PreExtractionResult,
-  existingTemplates?: Array<{ bank_name?: string | null }>
-): Promise<{ data: ExtractedData; rawResponse: string; tokensUsed: { input: number; output: number }; preMaskingStats: PreExtractionResult }> {
+async function extractStructuredData(
+  maskedText: string
+): Promise<{ data: ParsedResponse; tokensUsed: { input: number; output: number } }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
     throw new Error("LOVABLE_API_KEY is not configured");
   }
 
-  // Construct hints from existing templates if available
-  const templateHints = existingTemplates?.length
-    ? `Known bank formats include: ${existingTemplates
-        .map((t) => t.bank_name)
-        .filter((n): n is string => typeof n === "string" && n.length > 0)
-        .join(", ")}. But extract based on actual content.`
-    : "";
+  const extractionPrompt = `Analyze this credit card statement text and extract structured data.
 
-  const systemPrompt = `You are an expert credit card statement parser for Indian banks. 
-  
-IMPORTANT: The text you receive has ALREADY been PII-masked for compliance (two-layer protection). Work with the masked data.
+TEXT:
+${maskedText}
 
-EXTRACTION REQUIREMENTS:
-Extract the following with high accuracy:
-1. Bank Name (e.g., "HDFC Bank", "Axis Bank", "ICICI Bank", "SBI Card", "American Express")
-2. Card Product Name (e.g., "Infinia", "Regalia", "Atlas", "Millennia", "Reserve", "Coral")
-3. Statement Period (start and end dates in YYYY-MM-DD format)
-4. ALL transactions with: date (YYYY-MM-DD), description, amount, merchant name
-5. Layout features for template matching (header position, table format, logo placement)
-
-${templateHints}
-
-RESPOND ONLY WITH VALID JSON (no markdown, no explanations):
+EXTRACT and return as JSON:
 {
-  "bankName": "detected bank name",
-  "cardName": "detected card product name",
-  "cardholderName": "[PRE_MASKED]",
-  "statementPeriod": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"},
+  "layoutFeatures": ["list", "of", "structural", "features", "like", "headers", "table_columns", "date_formats"],
+  "bankName": "Bank name (HDFC, ICICI, Axis, SBI, etc.)",
+  "cardName": "Card product name (Infinia, Regalia, etc.)",
+  "statementPeriod": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
   "transactions": [
-    {"date": "YYYY-MM-DD", "description": "merchant/transaction details", "amount": 1234.56, "merchant": "simplified merchant name"}
+    {
+      "date": "YYYY-MM-DD",
+      "description": "Original transaction description",
+      "amount": 1234.56,
+      "merchant": "Extracted merchant name"
+    }
   ],
-  "layoutFeatures": ["header_centered", "logo_top_left", "table_with_borders", etc.],
-  "confidence": 0.95
+  "confidence": 0.85
 }
 
-Parse ALL visible transactions. For amounts, use positive numbers (debits as positive).`;
-
-  console.log("[PHASE 2] Structured extraction from pre-masked text (two-layer protected)...");
-
-  const requestBody = {
-    model: "google/gemini-2.5-flash",
-    messages: [
-      { role: "system", content: systemPrompt },
-      { 
-        role: "user", 
-        content: `Extract structured data from this pre-masked credit card statement text:\n\n${maskedText}`
-      }
-    ],
-    max_tokens: 8192,
-    temperature: 0.1,
-  };
+RULES:
+1. Use negative amounts for debits/purchases, positive for credits/refunds
+2. Parse all date formats (DD/MM/YYYY, DD-MMM-YYYY, etc.) to YYYY-MM-DD
+3. Extract merchant from description if not separate
+4. Confidence: 0.9+ if clear format, 0.7-0.9 for standard, <0.7 for unclear
+5. Return ONLY valid JSON, no markdown or explanation`;
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -1035,219 +406,39 @@ Parse ALL visible transactions. For amounts, use positive numbers (debits as pos
       "Authorization": `Bearer ${LOVABLE_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(requestBody),
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash",
+      messages: [{ role: "user", content: extractionPrompt }],
+      max_tokens: 8000,
+      temperature: 0,
+    }),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error("AI API error:", response.status, errorText);
-    if (response.status === 429) {
-      throw new Error("Rate limit exceeded. Please try again in a few minutes.");
-    }
-    if (response.status === 402) {
-      throw new Error("AI processing credits exhausted. Please contact support.");
-    }
-    throw new Error(`AI extraction failed with status ${response.status}`);
+    console.error("[EXTRACT] Structured extraction error:", response.status, errorText);
+    throw new Error(`Structured extraction failed: ${response.status}`);
   }
 
-  const aiResponse = await response.json();
-  const content = aiResponse.choices?.[0]?.message?.content || "{}";
+  const result = await response.json();
+  const content = result.choices?.[0]?.message?.content || "{}";
+  
+  // Parse JSON from response
+  let data: ParsedResponse;
+  try {
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    data = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+  } catch (e) {
+    console.error("[EXTRACT] JSON parse error:", e);
+    data = {};
+  }
+
   const tokensUsed = {
-    input: aiResponse.usage?.prompt_tokens || 0,
-    output: aiResponse.usage?.completion_tokens || 0,
+    input: result.usage?.prompt_tokens || 0,
+    output: result.usage?.completion_tokens || 0,
   };
 
-  // Parse and validate response
-  let parsed: ParsedResponse;
-  try {
-    let cleanContent = content.trim();
-    if (cleanContent.startsWith("```json")) cleanContent = cleanContent.slice(7);
-    if (cleanContent.startsWith("```")) cleanContent = cleanContent.slice(3);
-    if (cleanContent.endsWith("```")) cleanContent = cleanContent.slice(0, -3);
-    parsed = JSON.parse(cleanContent.trim()) as ParsedResponse;
-  } catch (e) {
-    console.error("Failed to parse AI response:", e, content);
-    throw new Error("Failed to parse statement. The format may not be supported.");
-  }
-
-  // Generate template signature from layout features
-  const layoutFeatures = parsed.layoutFeatures || [];
-  layoutFeatures.push(`bank_${(parsed.bankName || "unknown").toLowerCase().replace(/\s+/g, "_")}`);
-  const templateSignature = generateTemplateHash(layoutFeatures);
-
-  // Validate and sanitize extracted data
-  const bankValidation = validateName(parsed.bankName || "Unknown", "bank");
-  const cardValidation = validateName(parsed.cardName || "Generic", "card");
-
-  // Process transactions - descriptions are already pre-masked
-  const transactions: TransactionData[] = [];
-  for (const tx of (parsed.transactions || [])) {
-    // Apply additional masking pass for safety
-    const { maskedText: maskedDesc } = maskPII(tx.description || "");
-    const category = categorizeTransaction(tx.description || tx.merchant || "");
-    
-    transactions.push({
-      date: tx.date || new Date().toISOString().split("T")[0],
-      description: maskedDesc,
-      amount: Math.abs(Number(tx.amount ?? 0)),
-      merchant: sanitizeName(tx.merchant || maskedDesc.split(" ").slice(0, 2).join(" ")),
-      category,
-    });
-  }
-
-  return {
-    data: {
-      bankName: bankValidation.sanitized || "Unknown Bank",
-      cardName: cardValidation.sanitized || "Generic Card",
-      cardholderName: "[PRE_MASKED]", // Already masked before LLM
-      statementPeriod: {
-        start: parsed.statementPeriod?.start || "",
-        end: parsed.statementPeriod?.end || "",
-      },
-      transactions,
-      totalPoints: 0, // Will be calculated later
-      totalSpend: transactions.reduce((sum, t) => sum + t.amount, 0),
-      templateSignature,
-      confidence: parsed.confidence || 0.5,
-    },
-    rawResponse: content,
-    tokensUsed,
-    preMaskingStats,
-  };
-}
-
-// ============================================================================
-// TEMPLATE LEARNING - Store patterns, not data
-// ============================================================================
-
-async function learnTemplate(
-  supabase: SupabaseClient,
-  bankName: string,
-  templateSignature: string,
-  layoutFeatures: string[],
-  success: boolean
-) {
-  try {
-    // Check if template exists
-    const { data: existing } = await supabase
-      .from("statement_templates")
-      .select("id, extraction_success_count, extraction_failure_count")
-      .eq("template_hash", templateSignature)
-      .single();
-
-    if (existing) {
-      // Update success/failure counts
-      await supabase
-        .from("statement_templates")
-        .update({
-          extraction_success_count: existing.extraction_success_count + (success ? 1 : 0),
-          extraction_failure_count: existing.extraction_failure_count + (success ? 0 : 1),
-          last_successful_extraction: success ? new Date().toISOString() : undefined,
-        })
-        .eq("id", existing.id);
-    } else if (success) {
-      // Create new template entry (only on success)
-      await supabase
-        .from("statement_templates")
-        .insert({
-          bank_name: sanitizeName(bankName),
-          template_hash: templateSignature,
-          template_version: 1,
-          field_patterns: {}, // Will be populated with structural patterns
-          header_patterns: {},
-          table_patterns: {},
-          extraction_success_count: 1,
-          extraction_failure_count: 0,
-          last_successful_extraction: new Date().toISOString(),
-        });
-    }
-  } catch (e) {
-    // Non-critical - log and continue
-    console.error("Template learning error:", e);
-  }
-}
-
-// ============================================================================
-// AUDIT LOGGING - Compliance requirement with PII audit trail
-// ============================================================================
-
-async function logExtractionAudit(
-  supabase: SupabaseClient,
-  userId: string,
-  documentId: string,
-  params: {
-    templateId?: string;
-    extractionMethod: string;
-    confidenceScore: number;
-    fieldsExtracted: number;
-    piiFieldsMasked: number;
-    processingTimeMs: number;
-    llmModelUsed: string;
-    llmTokensInput: number;
-    llmTokensOutput: number;
-    passwordProtected: boolean;
-    status: "success" | "failed" | "pending";
-    errorMessage?: string;
-  }
-) {
-  try {
-    await supabase.from("extraction_audit_log").insert({
-      user_id: userId,
-      document_id: documentId,
-      template_id: params.templateId,
-      extraction_method: params.extractionMethod,
-      confidence_score: params.confidenceScore,
-      fields_extracted: params.fieldsExtracted,
-      pii_fields_masked: params.piiFieldsMasked,
-      processing_time_ms: params.processingTimeMs,
-      llm_model_used: params.llmModelUsed,
-      llm_tokens_input: params.llmTokensInput,
-      llm_tokens_output: params.llmTokensOutput,
-      password_protected: params.passwordProtected,
-      extraction_status: params.status,
-      error_message: params.errorMessage,
-    });
-    console.log(`[AUDIT] Extraction logged: ${params.status}, PII masked: ${params.piiFieldsMasked}`);
-  } catch (e) {
-    console.error("[AUDIT] Logging error:", e);
-  }
-}
-
-/**
- * Log detailed PII masking audit for compliance
- */
-async function logPIIAudit(
-  supabase: SupabaseClient,
-  userId: string,
-  documentId: string,
-  auditTrail: PIIAuditEntry[],
-  piiTypesFound: string[],
-  totalMasked: number
-) {
-  try {
-    // Log to pii_masking_log table
-    await supabase.from("pii_masking_log").insert({
-      user_id: userId,
-      source_type: "pdf_statement_two_layer_masking",
-      pii_types_found: piiTypesFound,
-      fields_masked: totalMasked,
-    });
-
-    // Log compliance entry for audit trail
-    await supabase.from("compliance_logs").insert({
-      user_id: userId,
-      action: "pii_masking_two_layer",
-      resource_type: "pdf_document",
-      resource_id: documentId,
-      pii_accessed: true, // Document contained PII
-      pii_masked: true,   // All PII was masked before LLM processing
-    });
-
-    console.log(`[PII AUDIT] Logged ${totalMasked} masked fields across ${piiTypesFound.length} PII types`);
-    console.log(`[PII AUDIT] Stages: OCR inline (${auditTrail.filter(a => a.stage === "ocr_inline").length}), Local (${auditTrail.filter(a => a.stage === "pre_llm_local").length})`);
-  } catch (e) {
-    console.error("[PII AUDIT] Logging error:", e);
-  }
+  return { data, tokensUsed };
 }
 
 // ============================================================================
@@ -1256,640 +447,228 @@ async function logPIIAudit(
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return new Response("ok", { headers: corsHeaders });
   }
 
   const startTime = Date.now();
-  const auditParams: {
-    extractionMethod: string;
-    confidenceScore: number;
-    fieldsExtracted: number;
-    piiFieldsMasked: number;
-    processingTimeMs: number;
-    llmModelUsed: string;
-    llmTokensInput: number;
-    llmTokensOutput: number;
-    passwordProtected: boolean;
-    status: "success" | "failed" | "pending";
-    errorMessage?: string;
-  } = {
-    extractionMethod: "adaptive_ai_two_layer_masking",
-    confidenceScore: 0,
-    fieldsExtracted: 0,
-    piiFieldsMasked: 0,
-    processingTimeMs: 0,
-    llmModelUsed: "google/gemini-2.5-flash",
-    llmTokensInput: 0,
-    llmTokensOutput: 0,
-    passwordProtected: false,
-    status: "pending" as const,
-  };
+  let supabase: SupabaseClient | null = null;
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { 
-      documentId, 
-      userId, 
-      filePath, 
-      cardName = "default",
-      password // Optional: for password-protected PDFs (session-only, never stored)
-    } = await req.json();
+    const { documentId, userId, filePath, cardName } = await req.json();
 
-    if (!filePath) {
-      return new Response(JSON.stringify({ error: "No file path provided" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (!filePath || !userId) {
+      return new Response(
+        JSON.stringify({ error: "Missing required parameters" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    // SECURITY: Never log password
-    console.log(`[START] Processing document ${documentId} for user ${userId}`);
-    auditParams.passwordProtected = !!password;
+    console.log(`[PARSE] Starting parse for document: ${documentId}`);
 
-    // Step 1: Download PDF from storage
+    // Download PDF from storage
     const { data: fileData, error: downloadError } = await supabase.storage
       .from("pdf-documents")
       .download(filePath);
 
     if (downloadError || !fileData) {
-      console.error("Download error:", downloadError);
-      throw new Error("Failed to download document from storage");
+      console.error("[PARSE] Download error:", downloadError);
+      throw new Error("Failed to download document");
     }
 
-    console.log(`[STEP 1] Downloaded PDF: ${fileData.size} bytes`);
-
-    // Step 2: Convert to base64 and validate PDF structure
+    // Convert to base64
     const arrayBuffer = await fileData.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    
-    // Early validation to catch corrupted files before expensive processing
-    const validation = validatePDFBytes(uint8Array);
-    if (!validation.valid && validation.error) {
-      console.error(`[VALIDATION] PDF failed validation: ${validation.error.code}`);
-      return new Response(
-        JSON.stringify({
-          error: validation.error.code,
-          message: validation.error.userMessage,
-          suggestedAction: validation.error.suggestedAction,
-          recoverable: validation.error.recoverable,
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-    
+    const pdfBytes = new Uint8Array(arrayBuffer);
     let binary = "";
-    for (let i = 0; i < uint8Array.length; i++) {
-      binary += String.fromCharCode(uint8Array[i]);
+    for (let i = 0; i < pdfBytes.length; i++) {
+      binary += String.fromCharCode(pdfBytes[i]);
     }
     const pdfBase64 = btoa(binary);
 
-    // Step 3: Fetch existing templates for hints (improves accuracy)
-    const { data: existingTemplates } = await supabase
-      .from("statement_templates")
-      .select("bank_name, template_hash, field_patterns")
-      .eq("is_active", true)
-      .order("extraction_success_count", { ascending: false })
-      .limit(10);
+    console.log(`[PARSE] PDF size: ${pdfBytes.length} bytes`);
 
-    // ========================================================================
-    // PHASE 1: TWO-LAYER PRE-LLM PII MASKING
-    // Layer 1: OCR with inline filtering (PII masked during extraction)
-    // Layer 2: Local regex-based masking (catches anything missed)
-    // ========================================================================
-    let ocrResult: { rawText: string; tokensUsed: { input: number; output: number }; ocrMaskedTypes: string[]; extractionMethod: string };
-    let preMaskingStats: PreExtractionResult;
-    
+    // Extract text from PDF
+    let extractionResult;
     try {
-      // Use smart extraction - local pdf.js for password-protected, AI OCR for regular PDFs
-      ocrResult = await extractRawTextFromPDF(pdfBase64, password, uint8Array);
-      
-      // PHASE 1B: Apply comprehensive local PII masking (skip if already done locally)
-      if (ocrResult.extractionMethod === "local_pdfjs_decryption") {
-        // Local extraction already applied PII masking
-        preMaskingStats = {
-          maskedText: ocrResult.rawText,
-          piiTypesFound: ocrResult.ocrMaskedTypes,
-          totalPiiMasked: ocrResult.ocrMaskedTypes.length,
-          rawTextLength: ocrResult.rawText.length,
-          extractionMethod: "ocr_with_inline_filter",
-          auditTrail: [],
-          ocrTokensUsed: ocrResult.tokensUsed,
-        };
-        auditParams.extractionMethod = "local_pdfjs_decryption";
-        console.log(`[PHASE 1] Local pdf.js decryption complete: ${preMaskingStats.totalPiiMasked} PII instances masked`);
-      } else {
-        // AI OCR - apply additional local masking
-        preMaskingStats = applyComprehensivePIIMasking(
-          ocrResult.rawText,
-          ocrResult.ocrMaskedTypes,
-          ocrResult.tokensUsed
-        );
-        auditParams.extractionMethod = "adaptive_ai_two_layer_masking";
-        console.log(`[PHASE 1] Two-layer masking complete: ${preMaskingStats.totalPiiMasked} PII instances masked`);
-      }
-      
-      auditParams.llmTokensInput += ocrResult.tokensUsed.input;
-      auditParams.llmTokensOutput += ocrResult.tokensUsed.output;
-      
-    } catch (e) {
-      // Get detailed error info if available
-      const errorInfo = (e as unknown as Record<string, unknown>).pdfErrorInfo as PDFErrorInfo | undefined;
-      const errorCode = e instanceof Error ? e.message : "UNKNOWN_ERROR";
-      
-      // Handle specific error codes with user-friendly responses
-      if (errorCode === PDF_ERROR_CODES.PASSWORD_REQUIRED) {
+      extractionResult = await extractRawTextFromPDF(pdfBase64, pdfBytes);
+    } catch (error) {
+      // Handle password-protected PDF error
+      if (error instanceof Error && error.message === "PASSWORD_REQUIRED") {
+        console.log("[PARSE] Password-protected PDF detected - returning error");
         return new Response(
           JSON.stringify({
             error: "PASSWORD_REQUIRED",
-            message: errorInfo?.userMessage || "This PDF is password protected. Please provide the password.",
             requiresPassword: true,
-            suggestedAction: errorInfo?.suggestedAction,
+            userMessage: "This PDF is password-protected. Please unlock it using iLovePDF or request an unencrypted statement from your bank.",
+            suggestedAction: "Unlock the PDF before uploading",
           }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-
-      if (errorCode === PDF_ERROR_CODES.INVALID_PASSWORD) {
-        return new Response(
-          JSON.stringify({
-            error: "INVALID_PASSWORD",
-            message: errorInfo?.userMessage || "Incorrect password. Please try again.",
-            requiresPassword: true,
-            suggestedAction: errorInfo?.suggestedAction,
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      if (errorCode === PDF_ERROR_CODES.NO_TEXT_CONTENT) {
-        return new Response(
-          JSON.stringify({
-            error: "UNSUPPORTED_PDF_CONTENT",
-            message: errorInfo?.userMessage || "We could open the PDF, but couldn't extract text (it may be a scanned/image-only statement). Please upload a text-based statement PDF.",
-            suggestedAction: errorInfo?.suggestedAction || "Use OCR software to convert scanned PDFs",
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      if (errorCode === PDF_ERROR_CODES.CORRUPTED_FILE) {
-        return new Response(
-          JSON.stringify({
-            error: "CORRUPTED_FILE",
-            message: errorInfo?.userMessage || "This PDF file appears to be corrupted or incomplete. Please try downloading the statement again from your bank.",
-            suggestedAction: errorInfo?.suggestedAction,
-            recoverable: false,
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      if (errorCode === PDF_ERROR_CODES.INVALID_STRUCTURE) {
-        return new Response(
-          JSON.stringify({
-            error: "INVALID_STRUCTURE",
-            message: errorInfo?.userMessage || "This PDF has an unsupported structure. Please try uploading a different format if available.",
-            suggestedAction: errorInfo?.suggestedAction,
-            recoverable: false,
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      if (errorCode === PDF_ERROR_CODES.FILE_TOO_LARGE) {
-        return new Response(
-          JSON.stringify({
-            error: "FILE_TOO_LARGE",
-            message: errorInfo?.userMessage || "This PDF is too large to process. Please upload a file under 20MB.",
-            suggestedAction: errorInfo?.suggestedAction,
-            recoverable: false,
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      if (errorCode === PDF_ERROR_CODES.ENCRYPTED_UNSUPPORTED) {
-        return new Response(
-          JSON.stringify({
-            error: "ENCRYPTED_UNSUPPORTED",
-            message: errorInfo?.userMessage || "This PDF uses an encryption method we don't support. Please try exporting an unencrypted version.",
-            suggestedAction: errorInfo?.suggestedAction,
-            recoverable: false,
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      if (errorCode === PDF_ERROR_CODES.EMPTY_DOCUMENT) {
-        return new Response(
-          JSON.stringify({
-            error: "EMPTY_DOCUMENT",
-            message: errorInfo?.userMessage || "This PDF appears to be empty. Please ensure you uploaded the correct file.",
-            suggestedAction: errorInfo?.suggestedAction,
-            recoverable: false,
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      if (errorCode === PDF_ERROR_CODES.PARSE_TIMEOUT) {
-        return new Response(
-          JSON.stringify({
-            error: "PARSE_TIMEOUT",
-            message: errorInfo?.userMessage || "Processing took too long. Please try again with a smaller file.",
-            suggestedAction: errorInfo?.suggestedAction,
-            recoverable: true,
-          }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      // Re-throw unknown errors to be caught by the outer handler
-      throw e;
+      throw error;
     }
 
-    // ========================================================================
-    // PHASE 2: Structured AI extraction from FULLY MASKED text
-    // ========================================================================
-    let extractionResult;
-    try {
-      extractionResult = await extractWithAdaptiveAI(
-        preMaskingStats.maskedText,
-        preMaskingStats,
-        existingTemplates || undefined
+    const { rawText, tokensUsed: ocrTokens, ocrMaskedTypes } = extractionResult;
+
+    if (!rawText || rawText.length < 100) {
+      console.error("[PARSE] Insufficient text extracted");
+      return new Response(
+        JSON.stringify({
+          error: "UNSUPPORTED_PDF_CONTENT",
+          userMessage: "Could not extract text from this PDF. It may be scanned or image-based.",
+          suggestedAction: "Request a digital statement from your bank instead of a scanned copy.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
-    } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      console.error("[PHASE 2] AI extraction failed:", errorMsg);
-
-      // Map AI extraction errors to user-friendly messages
-      if (errorMsg.includes("Rate limit") || errorMsg.includes("429")) {
-        throw new Error("AI_RATE_LIMIT");
-      }
-      if (errorMsg.includes("credits exhausted") || errorMsg.includes("402")) {
-        throw new Error("AI_CREDITS_EXHAUSTED");
-      }
-      if (errorMsg.includes("Failed to parse") || errorMsg.includes("JSON")) {
-        throw new Error("AI_EXTRACTION_FAILED");
-      }
-      if (errorMsg.includes("timeout") || errorMsg.includes("timed out")) {
-        throw new Error("AI_TIMEOUT");
-      }
-
-      // Re-throw with more context
-      throw new Error(`AI_EXTRACTION_ERROR: ${errorMsg}`);
     }
 
-    const { data: extractedData, tokensUsed, preMaskingStats: finalMaskingStats } = extractionResult;
-    auditParams.llmTokensInput += tokensUsed.input;
-    auditParams.llmTokensOutput += tokensUsed.output;
-    auditParams.confidenceScore = extractedData.confidence;
-    auditParams.piiFieldsMasked = finalMaskingStats.totalPiiMasked;
+    // Apply local PII masking as second layer
+    const { maskedText, piiTypesFound, fieldsMasked } = maskPII(rawText);
+    const allPiiTypes = [...new Set([...ocrMaskedTypes, ...piiTypesFound])];
 
-    console.log(`[PHASE 2] Extracted ${extractedData.transactions.length} transactions from ${extractedData.bankName} ${extractedData.cardName}`);
-    console.log(`[PII PROTECTION] ${finalMaskingStats.totalPiiMasked} fields masked BEFORE LLM processing`);
+    console.log(`[PARSE] PII masked: ${fieldsMasked} fields, types: ${allPiiTypes.join(", ")}`);
 
-    // Step 6: Calculate points and enrich transactions
-    const effectiveCardName = cardName !== "default" && cardName 
-      ? cardName 
-      : extractedData.cardName;
+    // Extract structured data
+    const { data: extractedData, tokensUsed: extractionTokens } = await extractStructuredData(maskedText);
 
-    const enrichedTransactions = extractedData.transactions.map(tx => ({
-      user_id: userId,
-      document_id: documentId,
-      transaction_date: tx.date,
-      description: tx.description,
-      amount: tx.amount,
-      category: tx.category,
-      points_earned: calculatePoints(tx.amount, tx.category || "Other", effectiveCardName),
-      merchant_name: tx.merchant,
-      is_masked: true, // All descriptions are PII-masked via two-layer protection
-    }));
+    // Process transactions
+    const transactions: TransactionData[] = (extractedData.transactions || []).map((tx) => {
+      const amount = typeof tx.amount === "string" ? parseFloat(tx.amount.replace(/[^0-9.-]/g, "")) : (tx.amount || 0);
+      const category = categorizeTransaction(tx.description || tx.merchant || "");
+      const detectedCardName = cardName !== "default" ? cardName : (extractedData.cardName || "default");
+      const points = calculatePoints(Math.abs(amount), category, detectedCardName);
 
-    const totalPoints = enrichedTransactions.reduce((sum, t) => sum + (t.points_earned || 0), 0);
+      return {
+        date: tx.date || "",
+        description: tx.description || "",
+        amount,
+        merchant: tx.merchant || tx.description || "",
+        category,
+        points,
+      };
+    });
 
-    // Step 7: Post-LLM PII verification pass
-    // Apply final masking to catch any PII in AI-generated descriptions
-    let postMaskingCount = 0;
-    const allPiiTypesFound = new Set<string>(finalMaskingStats.piiTypesFound);
-    const postLlmAuditEntries: PIIAuditEntry[] = [];
-    const timestamp = new Date().toISOString();
-    
-    for (const tx of extractedData.transactions) {
-      const { piiTypesFound: types, fieldsMasked } = maskPII(tx.description);
-      types.forEach(t => allPiiTypesFound.add(t));
-      if (fieldsMasked > 0) {
-        postMaskingCount += fieldsMasked;
-        for (const piiType of types) {
-          postLlmAuditEntries.push({
-            stage: "post_llm",
-            piiType,
-            count: 1,
-            action: "masked",
-            timestamp,
-          });
-        }
-      }
-    }
-    
-    const totalPiiMasked = finalMaskingStats.totalPiiMasked + postMaskingCount;
-    auditParams.piiFieldsMasked = totalPiiMasked;
-    auditParams.fieldsExtracted = enrichedTransactions.length;
+    // Calculate totals
+    const totalSpend = transactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+    const totalPoints = transactions.reduce((sum, tx) => sum + (tx.points || 0), 0);
 
-    // Combine all audit trail entries
-    const fullAuditTrail = [...finalMaskingStats.auditTrail, ...postLlmAuditEntries];
+    // Generate template hash
+    const templateHash = generateTemplateHash(extractedData.layoutFeatures || []);
 
-    // Step 8: Log PII masking audit with full trail
-    await logPIIAudit(
-      supabase,
-      userId,
-      documentId,
-      fullAuditTrail,
-      Array.from(allPiiTypesFound),
-      totalPiiMasked
-    );
+    // Validate and sanitize names
+    const bankValidation = validateName(extractedData.bankName || "", "bank");
+    const cardValidation = validateName(extractedData.cardName || "", "card");
 
-    // Step 9: Insert transactions
-    if (enrichedTransactions.length > 0) {
-      const { error: txError } = await supabase
-        .from("transactions")
-        .insert(enrichedTransactions);
+    const finalBankName = bankValidation.isValid ? bankValidation.sanitized : "Unknown Bank";
+    const finalCardName = cardValidation.isValid ? cardValidation.sanitized : (cardName !== "default" ? cardName : "Credit Card");
 
-      if (txError) {
-        console.error("Transaction insert error:", txError);
-      }
-    }
-
-    // Step 10: Create summary
-    const byCategory = enrichedTransactions.reduce((acc, t) => {
-      acc[t.category || "Other"] = (acc[t.category || "Other"] || 0) + t.amount;
-      return acc;
-    }, {} as Record<string, number>);
-
-    const summary = {
-      card_name: effectiveCardName,
-      bank_name: extractedData.bankName,
-      total_spend: extractedData.totalSpend,
+    // Prepare parsed data
+    const parsedData = {
+      bank_name: finalBankName,
+      card_name: finalCardName,
+      statement_period: extractedData.statementPeriod || { start: "", end: "" },
+      transaction_count: transactions.length,
+      transactions_parsed: transactions.length,
+      total_spend: totalSpend,
       total_points_earned: totalPoints,
-      transaction_count: enrichedTransactions.length,
-      spending_by_category: byCategory,
-      statement_period: extractedData.statementPeriod,
+      pii_masked: fieldsMasked,
+      confidence: extractedData.confidence || 0.8,
+      template_hash: templateHash,
       detected_card: {
-        card_name: extractedData.cardName,
-        bank_name: extractedData.bankName,
-        confidence: extractedData.confidence,
-        auto_detected: cardName === "default" || !cardName,
+        bank_name: finalBankName,
+        card_name: finalCardName,
+        confidence: extractedData.confidence || 0.8,
       },
-      extraction_method: "adaptive_ai_two_layer_masking",
-      template_signature: extractedData.templateSignature,
     };
 
-    // Step 11: Update document with parsed data
-    await supabase
+    // Update document with parsed data
+    const { error: updateError } = await supabase
       .from("pdf_documents")
-      .update({ parsed_data: summary })
+      .update({ parsed_data: parsedData })
       .eq("id", documentId);
 
-    // Step 12: Create or update credit card
-    if (extractedData.confidence >= 0.7 && extractedData.bankName !== "Unknown Bank") {
-      const finalCardName = sanitizeName(extractedData.cardName) || "Generic Card";
-      const finalBankName = sanitizeName(extractedData.bankName);
-
-      if (finalCardName.length >= 2 && finalBankName.length >= 2) {
-        const { data: existingCards } = await supabase
-          .from("credit_cards")
-          .select("id, points")
-          .eq("user_id", userId)
-          .eq("bank_name", finalBankName)
-          .eq("card_name", finalCardName)
-          .limit(1);
-
-        if (existingCards && existingCards.length > 0) {
-          await supabase
-            .from("credit_cards")
-            .update({ 
-              points: (existingCards[0].points || 0) + totalPoints,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", existingCards[0].id);
-        } else {
-          const variantMap: Record<string, string> = {
-            "HDFC Bank": "emerald",
-            "HDFC": "emerald",
-            "Axis Bank": "gold",
-            "Axis": "gold",
-            "ICICI Bank": "platinum",
-            "ICICI": "platinum",
-            "American Express": "gold",
-            "Amex": "gold",
-            "SBI Card": "emerald",
-            "SBI": "emerald",
-            "Kotak": "platinum",
-            "IndusInd": "gold",
-          };
-          
-          await supabase.from("credit_cards").insert({
-            user_id: userId,
-            bank_name: finalBankName,
-            card_name: finalCardName,
-            points: totalPoints,
-            point_value: 0.40,
-            variant: variantMap[finalBankName] || "emerald",
-          });
-        }
-      }
+    if (updateError) {
+      console.error("[PARSE] Update error:", updateError);
     }
 
-    // Step 13: Create document chunks for RAG
-    const chunks = [];
-    const cardDisplayName = `${extractedData.bankName} ${extractedData.cardName}`;
-    
-    // Summary chunk
-    chunks.push({
-      user_id: userId,
-      document_id: documentId,
-      chunk_text: `Credit Card Statement Summary for ${cardDisplayName}:
-Total Spend: ₹${extractedData.totalSpend.toLocaleString()}
-Total Points Earned: ${totalPoints}
-Transaction Count: ${enrichedTransactions.length}
-Statement Period: ${extractedData.statementPeriod.start} to ${extractedData.statementPeriod.end}
-Top Categories: ${Object.entries(byCategory)
-  .sort(([,a], [,b]) => (b as number) - (a as number))
-  .slice(0, 5)
-  .map(([cat, amt]) => `${cat}: ₹${(amt as number).toLocaleString()}`)
-  .join(", ")}`,
-      chunk_index: 0,
-      metadata: {
-        card_name: effectiveCardName,
-        bank_name: extractedData.bankName,
-        document_type: "statement",
-        chunk_type: "summary",
-      },
-    });
-
-    // Transaction chunks
-    let currentChunk = "";
-    let chunkIndex = 1;
-    for (const tx of enrichedTransactions) {
-      const txText = `${tx.transaction_date}: ${tx.merchant_name} - ₹${tx.amount} (${tx.category}, ${tx.points_earned} pts)`;
-      if (currentChunk.length + txText.length > 400) {
-        chunks.push({
-          user_id: userId,
-          document_id: documentId,
-          chunk_text: currentChunk,
-          chunk_index: chunkIndex++,
-          metadata: {
-            card_name: effectiveCardName,
-            bank_name: extractedData.bankName,
-            document_type: "statement",
-            chunk_type: "transactions",
-          },
-        });
-        currentChunk = txText;
-      } else {
-        currentChunk += (currentChunk ? "\n" : "") + txText;
-      }
-    }
-    if (currentChunk) {
-      chunks.push({
+    // Insert transactions
+    if (transactions.length > 0) {
+      const transactionInserts = transactions.map((tx) => ({
         user_id: userId,
         document_id: documentId,
-        chunk_text: currentChunk,
-        chunk_index: chunkIndex,
-        metadata: {
-          card_name: effectiveCardName,
-          bank_name: extractedData.bankName,
-          document_type: "statement",
-          chunk_type: "transactions",
-        },
-      });
+        transaction_date: tx.date || new Date().toISOString().split("T")[0],
+        description: tx.description,
+        amount: tx.amount,
+        merchant_name: tx.merchant,
+        category: tx.category,
+        points_earned: tx.points,
+        is_masked: true,
+      }));
+
+      const { error: insertError } = await supabase
+        .from("transactions")
+        .insert(transactionInserts);
+
+      if (insertError) {
+        console.error("[PARSE] Transaction insert error:", insertError);
+      }
     }
 
-    if (chunks.length > 0) {
-      await supabase.from("document_chunks").insert(chunks);
-    }
-
-    // Step 14: Learn template pattern (no PII stored)
-    await learnTemplate(
-      supabase,
-      extractedData.bankName,
-      extractedData.templateSignature,
-      [], // Layout features already in signature
-      true
-    );
-
-    // Step 15: Compliance logging
-    await supabase.from("compliance_logs").insert({
+    // Log extraction audit
+    const processingTime = Date.now() - startTime;
+    await supabase.from("extraction_audit_log").insert({
       user_id: userId,
-      action: "parse_statement_two_layer_masking",
-      resource_type: "pdf_document",
-      resource_id: documentId,
-      pii_accessed: allPiiTypesFound.size > 0,
-      pii_masked: totalPiiMasked > 0,
+      document_id: documentId,
+      extraction_method: "ai_adaptive",
+      extraction_status: "success",
+      fields_extracted: transactions.length,
+      pii_fields_masked: fieldsMasked,
+      confidence_score: extractedData.confidence || 0.8,
+      processing_time_ms: processingTime,
+      llm_model_used: "gemini-2.5-flash",
+      llm_tokens_input: ocrTokens.input + extractionTokens.input,
+      llm_tokens_output: ocrTokens.output + extractionTokens.output,
+      password_protected: false,
     });
 
-    // Step 16: Audit logging
-    auditParams.processingTimeMs = Date.now() - startTime;
-    auditParams.status = "success";
-    await logExtractionAudit(supabase, userId, documentId, auditParams);
-
-    // Step 17: Token usage logging (combined OCR + extraction)
-    const totalTokensInput = (preMaskingStats.ocrTokensUsed?.input || 0) + tokensUsed.input;
-    const totalTokensOutput = (preMaskingStats.ocrTokensUsed?.output || 0) + tokensUsed.output;
-    
-    await supabase.from("token_usage").insert({
-      user_id: userId,
-      model: "google/gemini-2.5-flash",
-      tokens_input: totalTokensInput,
-      tokens_output: totalTokensOutput,
-      query_type: "pdf_parsing_two_layer",
-      estimated_cost: (totalTokensInput * 0.0001 + totalTokensOutput * 0.0003) / 1000,
-    });
+    console.log(`[PARSE] Complete in ${processingTime}ms - ${transactions.length} transactions`);
 
     return new Response(
       JSON.stringify({
         success: true,
-        summary,
-        transactions_parsed: enrichedTransactions.length,
-        chunks_created: chunks.length,
-        pii_masked: totalPiiMasked,
-        pii_protection: {
-          layer_1_ocr_inline: preMaskingStats.auditTrail.filter(a => a.stage === "ocr_inline").length,
-          layer_2_local_regex: preMaskingStats.auditTrail.filter(a => a.stage === "pre_llm_local").length,
-          layer_3_post_llm: postMaskingCount,
-          total_masked: totalPiiMasked,
-          pii_types_found: Array.from(allPiiTypesFound),
-          raw_text_length: finalMaskingStats.rawTextLength,
-          compliance_level: "strict_two_layer_pre_masking",
-          audit_trail_entries: fullAuditTrail.length,
-        },
-        extraction_method: "adaptive_ai_two_layer_masking",
-        confidence: extractedData.confidence,
-        template_learned: true,
-        detected_card: {
-          card_name: extractedData.cardName,
-          bank_name: extractedData.bankName,
-          confidence: extractedData.confidence,
-          used_for_rewards: effectiveCardName,
-        },
-        processing_time_ms: Date.now() - startTime,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
-  } catch (error) {
-    const processingTime = Date.now() - startTime;
-    console.error("[ERROR] Parse PDF error:", error);
-
-    // Log failed attempt if we have context
-    auditParams.processingTimeMs = processingTime;
-    auditParams.status = "failed";
-    auditParams.errorMessage = error instanceof Error ? error.message : "Unknown error";
-
-    return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : "Unknown error",
+        ...parsedData,
         processing_time_ms: processingTime,
       }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+
+  } catch (error) {
+    console.error("[PARSE] Error:", error);
+    
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    
+    // Check for specific error types
+    if (errorMessage.includes("PASSWORD_REQUIRED")) {
+      return new Response(
+        JSON.stringify({
+          error: "PASSWORD_REQUIRED",
+          requiresPassword: true,
+          userMessage: "This PDF is password-protected. Please unlock it before uploading.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        error: "PARSE_ERROR",
+        message: errorMessage,
+        userMessage: "Failed to parse the PDF. Please try again or use a different file.",
+      }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

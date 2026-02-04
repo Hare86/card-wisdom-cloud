@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { getSupabaseClient } from "@/integrations/supabase/lazyClient";
@@ -7,16 +7,6 @@ import { MobileNav } from "@/components/dashboard/MobileNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Upload as UploadIcon, 
@@ -26,15 +16,11 @@ import {
   CheckCircle2,
   ArrowLeft,
   Sparkles,
-  AlertCircle,
-  Lock,
-  Eye,
-  EyeOff,
-  ShieldCheck
+  ShieldCheck,
+  Lock
 } from "lucide-react";
 import { validatePDFFile, mapServerError, type PDFParseError } from "@/lib/pdf-validation";
 import { PDFErrorAlert } from "@/components/upload/PDFErrorAlert";
-import { PDFUnlockGuide } from "@/components/upload/PDFUnlockGuide";
 
 interface ParsedData {
   transaction_count?: number;
@@ -58,7 +44,6 @@ interface UploadedFile {
   file_path: string;
   created_at: string;
   document_type: string;
-  // Stored as JSON in the backend; can be any JSON type.
   parsed_data: unknown;
 }
 
@@ -80,17 +65,6 @@ const CARD_OPTIONS = [
   { value: "Prime", label: "SBI Prime" },
 ];
 
-// Session-only password cache (cleared on page refresh - security requirement)
-// This is stored in React state, NOT localStorage or sessionStorage
-interface SessionPasswordCache {
-  [documentId: string]: {
-    password: string;
-    timestamp: number;
-  };
-}
-
-const PASSWORD_CACHE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
-
 export default function Upload() {
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
@@ -102,21 +76,8 @@ export default function Upload() {
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [selectedCard, setSelectedCard] = useState("default");
   
-  // Password dialog state
-  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
-  const [pendingPasswordFile, setPendingPasswordFile] = useState<UploadedFile | null>(null);
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
-  
-  // Session-only password cache (memory only - cleared on page refresh)
-  const sessionPasswordCacheRef = useRef<SessionPasswordCache>({});
-  
   // PDF parsing error state for displaying actionable errors
   const [parseError, setParseError] = useState<(PDFParseError & { fileName?: string }) | null>(null);
-  
-  // Show unlock guide for encrypted PDFs that need external unlocking
-  const [showUnlockGuide, setShowUnlockGuide] = useState<{ show: boolean; fileName?: string }>({ show: false });
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -141,61 +102,6 @@ export default function Upload() {
       setLoadingFiles(false);
     }
   }, []);
-
-  // Check if uploaded PDF is password-protected
-  const checkPasswordProtection = useCallback(async (file: UploadedFile) => {
-    try {
-      console.log("[DEBUG] checkPasswordProtection START for file:", file.file_name, "ID:", file.id);
-
-      toast({
-        title: "Checking document...",
-        description: "Detecting if password is required...",
-      });
-
-      const sb = getSupabaseClient();
-      if (!sb) return;
-      const { data, error } = await sb.functions.invoke("check-pdf-password", {
-        body: {
-          filePath: file.file_path,
-          documentId: file.id,
-        },
-      });
-
-      console.log("[DEBUG] check-pdf-password response:", { data, error });
-
-      if (error) {
-        console.error("[DEBUG] Password check error:", error);
-        toast({
-          title: "File uploaded",
-          description: `${file.file_name} ready. Click "Parse" to extract data.`,
-        });
-        return;
-      }
-
-      console.log("[DEBUG] isPasswordProtected value:", data?.isPasswordProtected);
-
-      if (data?.isPasswordProtected === true) {
-        console.log("[DEBUG] PDF IS PASSWORD PROTECTED - Opening dialog");
-        setPendingPasswordFile(file);
-        setPasswordDialogOpen(true);
-        toast({
-          title: "Password Required",
-          description: "This PDF is password protected. Please enter the password to continue.",
-        });
-      } else {
-        toast({
-          title: "File uploaded",
-          description: `${file.file_name} ready. Click "Parse" to extract data.`,
-        });
-      }
-    } catch (error) {
-      console.error("[DEBUG] Password check exception:", error);
-      toast({
-        title: "File uploaded",
-        description: `${file.file_name} ready. Click "Parse" to extract data.`,
-      });
-    }
-  }, [toast]);
 
   const validateFilesBeforeUpload = useCallback(async (files: File[]): Promise<File[]> => {
     const validFiles: File[] = [];
@@ -254,7 +160,7 @@ export default function Upload() {
         if (uploadError) throw uploadError;
 
         // Save metadata to database
-        const { data: docData, error: dbError } = await sb
+        const { error: dbError } = await sb
           .from("pdf_documents")
           .insert({
             user_id: user.id,
@@ -270,11 +176,8 @@ export default function Upload() {
 
         toast({
           title: "File uploaded",
-          description: `${file.name} uploaded. Checking document...`,
+          description: `${file.name} ready. Click "Parse" to extract data.`,
         });
-
-        // Immediately check if PDF is password-protected
-        await checkPasswordProtection(docData as unknown as UploadedFile);
 
         await fetchUploadedFiles();
       } catch (error) {
@@ -288,28 +191,13 @@ export default function Upload() {
     }
 
     setIsUploading(false);
-  }, [user, toast, fetchUploadedFiles, checkPasswordProtection]);
+  }, [user, toast, fetchUploadedFiles]);
 
   useEffect(() => {
     if (user) {
       fetchUploadedFiles();
     }
   }, [user, fetchUploadedFiles]);
-
-  // Cleanup expired passwords from cache
-  useEffect(() => {
-    const cleanup = setInterval(() => {
-      const now = Date.now();
-      const cache = sessionPasswordCacheRef.current;
-      for (const docId in cache) {
-        if (now - cache[docId].timestamp > PASSWORD_CACHE_TIMEOUT_MS) {
-          delete cache[docId];
-        }
-      }
-    }, 60000); // Check every minute
-
-    return () => clearInterval(cleanup);
-  }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -324,8 +212,7 @@ export default function Upload() {
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    setParseError(null); // Clear previous errors
-    setShowUnlockGuide({ show: false }); // Clear unlock guide
+    setParseError(null);
     
     const files = Array.from(e.dataTransfer.files).filter(
       (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith('.pdf')
@@ -340,7 +227,6 @@ export default function Upload() {
       return;
     }
     
-    // Validate files before upload
     const validatedFiles = await validateFilesBeforeUpload(files);
     if (validatedFiles.length > 0) {
       uploadFiles(validatedFiles);
@@ -349,8 +235,7 @@ export default function Upload() {
   
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    setParseError(null); // Clear previous errors
-    setShowUnlockGuide({ show: false }); // Clear unlock guide
+    setParseError(null);
     const files = e.target.files ? Array.from(e.target.files) : [];
     
     if (files.length > 0) {
@@ -361,13 +246,8 @@ export default function Upload() {
     }
   };
 
-  // (callbacks reordered above to avoid TDZ / "used before declaration" errors)
-
-  // Returns: { success: boolean, errorCode?: string } to allow callers to handle outcomes
-  const parseDocument = async (file: UploadedFile, providedPassword?: string): Promise<{ success: boolean; errorCode?: string }> => {
+  const parseDocument = async (file: UploadedFile): Promise<{ success: boolean; errorCode?: string }> => {
     if (!user) return { success: false, errorCode: "NO_USER" };
-
-    console.log("[DEBUG] parseDocument START for file:", file.file_name, "providedPassword:", !!providedPassword);
 
     setIsParsing(file.id);
     setParseError(null);
@@ -378,66 +258,40 @@ export default function Upload() {
         description: "AI is analyzing your credit card statement. This may take 10-30 seconds.",
       });
 
-      // Check session cache for password (session-only, not persisted)
-      const cachedEntry = sessionPasswordCacheRef.current[file.id];
-      const usePassword = providedPassword ||
-        (cachedEntry && Date.now() - cachedEntry.timestamp < PASSWORD_CACHE_TIMEOUT_MS
-          ? cachedEntry.password
-          : undefined);
-
-      console.log("[DEBUG] Using password from:", providedPassword ? "providedPassword" : cachedEntry ? "cache" : "none");
-
-      // Call parse-pdf with adaptive AI extraction
       const sb = getSupabaseClient();
       if (!sb) throw new Error("Backend not configured");
+      
       const response = await sb.functions.invoke("parse-pdf", {
         body: {
           documentId: file.id,
           userId: user.id,
           filePath: file.file_path,
           cardName: selectedCard,
-          password: usePassword,
         },
       });
 
-      console.log("[DEBUG] parse-pdf response:", {
-        hasData: !!response.data,
-        hasError: !!response.error,
-        dataError: response.data?.error,
-        dataKeys: response.data ? Object.keys(response.data) : []
-      });
-
-      // Incorrect password: keep dialog open and show a clear message
-      if (response.data?.error === "INVALID_PASSWORD") {
-        console.log("[DEBUG] INVALID_PASSWORD detected - returning error");
-        setIsParsing(null);
-        return { success: false, errorCode: "INVALID_PASSWORD" };
-      }
-
-      // Check for password requirement - now returned as 200 with error field
-      const isPasswordRequired = response.data?.error === "PASSWORD_REQUIRED" || response.data?.requiresPassword;
-
-      console.log("[DEBUG] Password required check:", {
-        isPasswordRequired,
-        errorField: response.data?.error,
-        requiresPasswordField: response.data?.requiresPassword
-      });
-
-      if (isPasswordRequired) {
-        console.log("[DEBUG] PASSWORD REQUIRED - Opening password dialog");
-        setIsParsing(null);
-        setPendingPasswordFile(file);
-        setPasswordDialogOpen(true);
-        toast({
-          title: "Password Required",
-          description: "This PDF is password protected. Please enter the password.",
+      // Handle password-protected PDF error
+      if (response.data?.error === "PASSWORD_REQUIRED" || response.data?.requiresPassword) {
+        setParseError({
+          code: "PASSWORD_REQUIRED",
+          message: "This PDF is password protected.",
+          userMessage: "This PDF is password protected.",
+          suggestedAction: "Please unlock the PDF using an external tool (like iLovePDF or Adobe Acrobat) before uploading, or request an unencrypted statement from your bank.",
+          fileName: file.file_name,
         });
+        
+        toast({
+          variant: "destructive",
+          title: "Password-protected PDF",
+          description: "Please upload an unlocked/passwordless PDF file.",
+        });
+        
+        setIsParsing(null);
         return { success: false, errorCode: "PASSWORD_REQUIRED" };
       }
 
       // Check for structured error responses from the edge function
       if (response.data?.error) {
-        console.log("[DEBUG] Error in response.data:", response.data.error);
         const parsedError = mapServerError(response.data);
         setParseError({
           ...parsedError,
@@ -453,23 +307,12 @@ export default function Upload() {
         return { success: false, errorCode: response.data.error };
       }
 
-      // Throw if there's an actual error
       if (response.error) {
-        console.log("[DEBUG] Throwing response.error:", response.error);
         throw response.error;
       }
       
       const data = response.data;
 
-      // Success - cache password for session if used
-      if (providedPassword) {
-        sessionPasswordCacheRef.current[file.id] = {
-          password: providedPassword,
-          timestamp: Date.now(),
-        };
-      }
-
-      // Clear any previous errors on success
       setParseError(null);
 
       const detectedInfo = data.detected_card 
@@ -485,31 +328,23 @@ export default function Upload() {
       setIsParsing(null);
       return { success: true };
     } catch (error) {
-      console.error("[DEBUG] Parse error caught:", error);
+      console.error("Parse error:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to parse document. Please try again.";
-      console.log("[DEBUG] Error message:", errorMessage);
-
-      if (errorMessage.includes("INVALID_PASSWORD")) {
-        console.log("[DEBUG] INVALID_PASSWORD in catch");
-        setIsParsing(null);
-        return { success: false, errorCode: "INVALID_PASSWORD" };
-      }
 
       // Check for password requirement in error
-      if (errorMessage.includes("PASSWORD_REQUIRED")) {
-        console.log("[DEBUG] PASSWORD_REQUIRED in catch - opening dialog");
-        setIsParsing(null);
-        setPendingPasswordFile(file);
-        setPasswordDialogOpen(true);
-        toast({
-          title: "Password Required",
-          description: "This PDF is password protected. Please enter the password.",
+      if (errorMessage.includes("PASSWORD_REQUIRED") || errorMessage.includes("password")) {
+        setParseError({
+          code: "PASSWORD_REQUIRED",
+          message: "This PDF is password protected.",
+          userMessage: "This PDF is password protected.",
+          suggestedAction: "Please unlock the PDF using an external tool (like iLovePDF or Adobe Acrobat) before uploading, or request an unencrypted statement from your bank.",
+          fileName: file.file_name,
         });
+        
+        setIsParsing(null);
         return { success: false, errorCode: "PASSWORD_REQUIRED" };
       }
 
-      // Map the error to user-friendly format
-      console.log("[DEBUG] Mapping error to user-friendly format");
       const parsedError = mapServerError(errorMessage);
       setParseError({
         ...parsedError,
@@ -526,81 +361,10 @@ export default function Upload() {
     }
   };
 
-  const handlePasswordSubmit = async () => {
-    if (!pendingPasswordFile || !password.trim()) {
-      console.log("[DEBUG] handlePasswordSubmit - missing file or password");
-      return;
-    }
-
-    console.log("[DEBUG] handlePasswordSubmit START for file:", pendingPasswordFile.file_name);
-    setIsSubmittingPassword(true);
-
-    // Parse with provided password and check result
-    const result = await parseDocument(pendingPasswordFile, password);
-
-    setIsSubmittingPassword(false);
-
-    // Handle different outcomes based on returned result
-    if (result.errorCode === "INVALID_PASSWORD") {
-      console.log("[DEBUG] Invalid password - keeping dialog open");
-      toast({
-        variant: "destructive",
-        title: "Invalid password",
-        description: "The password you entered is incorrect. Please try again.",
-      });
-      // Keep dialog open for retry
-      return;
-    }
-
-    if (result.errorCode === "ENCRYPTED_UNSUPPORTED") {
-      console.log("[DEBUG] Encryption not supported - closing dialog and showing unlock guide");
-      setPasswordDialogOpen(false);
-      setPassword("");
-      setPendingPasswordFile(null);
-      setShowPassword(false);
-      // Show the unlock guide instead of just a toast
-      setShowUnlockGuide({ show: true, fileName: pendingPasswordFile.file_name });
-      toast({
-        variant: "destructive",
-        title: "Encryption Not Supported",
-        description: "Please unlock this PDF using an external tool, then re-upload.",
-      });
-      return;
-    }
-
-    if (!result.success && result.errorCode) {
-      console.log("[DEBUG] Parse failed with error:", result.errorCode, "- closing dialog");
-      // Close dialog for other errors (error alert will be shown on page)
-      setPasswordDialogOpen(false);
-      setPassword("");
-      setPendingPasswordFile(null);
-      setShowPassword(false);
-      return;
-    }
-
-    if (result.success) {
-      console.log("[DEBUG] Password submit SUCCESS - closing dialog");
-      setPasswordDialogOpen(false);
-      setPassword("");
-      setPendingPasswordFile(null);
-      setShowPassword(false);
-    }
-  };
-
-  const handlePasswordCancel = () => {
-    setPasswordDialogOpen(false);
-    setPassword("");
-    setPendingPasswordFile(null);
-    setShowPassword(false);
-  };
-
   const deleteFile = async (file: UploadedFile) => {
     try {
       const sb = getSupabaseClient();
       if (!sb) throw new Error("Backend not configured");
-
-      // Clear any cached password for this file
-      delete sessionPasswordCacheRef.current[file.id];
       
       // Delete from storage
       await sb.storage
@@ -669,16 +433,6 @@ export default function Upload() {
           </p>
         </div>
 
-        {/* Unlock Guide - shown when PDF encryption is not supported */}
-        {showUnlockGuide.show && (
-          <div className="mb-6">
-            <PDFUnlockGuide
-              fileName={showUnlockGuide.fileName}
-              onDismiss={() => setShowUnlockGuide({ show: false })}
-            />
-          </div>
-        )}
-
         {/* Error Alert */}
         {parseError && (
           <div className="mb-6">
@@ -688,7 +442,7 @@ export default function Upload() {
               suggestedAction={parseError.suggestedAction}
               fileName={parseError.fileName}
               onDismiss={() => setParseError(null)}
-              onRetry={parseError.fileName ? () => {
+              onRetry={parseError.code !== "PASSWORD_REQUIRED" && parseError.fileName ? () => {
                 const file = uploadedFiles.find(f => f.file_name === parseError.fileName);
                 if (file) {
                   setParseError(null);
@@ -767,12 +521,32 @@ export default function Upload() {
                           {isDragging ? "Drop files here" : "Click to upload or drag and drop"}
                         </p>
                         <p className="text-sm text-muted-foreground mt-1">
-                          PDF files only (max 10MB) • Password-protected PDFs supported
+                          PDF files only (max 20MB) • Passwordless PDFs only
                         </p>
                       </div>
                     </div>
                   )}
                 </label>
+              </div>
+
+              {/* Password Notice */}
+              <div className="flex items-start gap-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
+                <Lock className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium text-warning">Password-Protected PDFs</p>
+                  <p className="text-muted-foreground">
+                    If your bank statement is password-protected, please unlock it first using{" "}
+                    <a 
+                      href="https://www.ilovepdf.com/unlock_pdf" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="underline text-primary hover:text-primary/80"
+                    >
+                      iLovePDF
+                    </a>{" "}
+                    or request an unencrypted statement from your bank.
+                  </p>
+                </div>
               </div>
 
               {/* Security Notice */}
@@ -782,7 +556,6 @@ export default function Upload() {
                   <p className="font-medium">Security & Privacy</p>
                   <p className="text-muted-foreground">
                     • All PII (names, card numbers, emails) automatically masked before AI processing<br/>
-                    • Password-protected PDFs supported (password never stored)<br/>
                     • Data encrypted and GDPR/PCI-DSS compliant
                   </p>
                 </div>
@@ -902,92 +675,6 @@ export default function Upload() {
           </Card>
         </div>
       </main>
-
-      {/* Password Dialog */}
-      <Dialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Lock className="w-5 h-5 text-primary" />
-              Password Protected PDF
-            </DialogTitle>
-            <DialogDescription>
-              This statement is password protected. Enter the password to proceed.
-              {pendingPasswordFile && (
-                <span className="block mt-1 font-medium text-foreground">
-                  {pendingPasswordFile.file_name}
-                </span>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="pdf-password">PDF Password</Label>
-              <div className="relative">
-                <Input
-                  id="pdf-password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter PDF password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && password.trim()) {
-                      handlePasswordSubmit();
-                    }
-                  }}
-                  className="pr-10"
-                  autoComplete="off"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-0 top-0 h-full px-3"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? (
-                    <EyeOff className="w-4 h-4 text-muted-foreground" />
-                  ) : (
-                    <Eye className="w-4 h-4 text-muted-foreground" />
-                  )}
-                </Button>
-              </div>
-            </div>
-            
-            <div className="flex items-start gap-2 p-3 bg-muted/50 rounded-lg">
-              <AlertCircle className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-              <p className="text-xs text-muted-foreground">
-                Your password is used only to decrypt the PDF and is never stored. 
-                It may be cached in memory for this session (15 min timeout) for convenience.
-              </p>
-            </div>
-          </div>
-          
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={handlePasswordCancel}
-              disabled={isSubmittingPassword}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handlePasswordSubmit}
-              disabled={!password.trim() || isSubmittingPassword}
-            >
-              {isSubmittingPassword ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                "Unlock & Parse"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
