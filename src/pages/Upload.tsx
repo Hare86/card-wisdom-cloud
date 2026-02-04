@@ -530,22 +530,42 @@ export default function Upload() {
               </div>
 
               {/* Password Notice */}
-              <div className="flex items-start gap-3 p-3 bg-warning/10 border border-warning/30 rounded-lg">
+              <div className="flex items-start gap-3 p-4 bg-warning/10 border border-warning/30 rounded-lg">
                 <Lock className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
-                <div className="text-sm">
+                <div className="text-sm space-y-3">
                   <p className="font-medium text-warning">Password-Protected PDFs</p>
                   <p className="text-muted-foreground">
-                    If your bank statement is password-protected, please unlock it first using{" "}
-                    <a 
-                      href="https://www.ilovepdf.com/unlock_pdf" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="underline text-primary hover:text-primary/80"
-                    >
-                      iLovePDF
-                    </a>{" "}
-                    or request an unencrypted statement from your bank.
+                    If your bank statement is password-protected, you can unlock it using one of these methods:
                   </p>
+                  
+                  {/* Method 1: Browser Print */}
+                  <div className="space-y-2">
+                    <p className="font-medium text-foreground">Option 1: Unlock via Browser (Recommended)</p>
+                    <ol className="list-decimal list-inside text-muted-foreground space-y-1 pl-1">
+                      <li>Open the PDF file in your browser (Chrome, Edge, or Safari)</li>
+                      <li>Enter the password when prompted to view the document</li>
+                      <li>Once the PDF opens, press <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Ctrl+P</kbd> (Windows) or <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">Cmd+P</kbd> (Mac) to open print</li>
+                      <li>Select "Save as PDF" or "Microsoft Print to PDF" as the printer</li>
+                      <li>Save the file — this new PDF will be unlocked and ready to upload</li>
+                    </ol>
+                  </div>
+
+                  {/* Method 2: Online Tool */}
+                  <div className="space-y-2">
+                    <p className="font-medium text-foreground">Option 2: Use an Online Tool</p>
+                    <p className="text-muted-foreground">
+                      Visit{" "}
+                      <a 
+                        href="https://www.ilovepdf.com/unlock_pdf" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="underline text-primary hover:text-primary/80"
+                      >
+                        iLovePDF Unlock
+                      </a>{" "}
+                      to remove the password online, then download the unlocked file.
+                    </p>
+                  </div>
                 </div>
               </div>
 
