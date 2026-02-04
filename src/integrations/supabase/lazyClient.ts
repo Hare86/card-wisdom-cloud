@@ -7,16 +7,29 @@ type SupabaseEnv = {
   projectId?: string;
 };
 
+// Public fallback values (safe to ship). These prevent auth from breaking when
+// the preview environment fails to inject Vite env vars (import.meta.env.*).
+// NOTE: These are NOT service-role secrets.
+const FALLBACK_PROJECT_ID = "sjwdbubmrnsycfgtzhga";
+const FALLBACK_URL = `https://${FALLBACK_PROJECT_ID}.supabase.co`;
+const FALLBACK_PUBLISHABLE_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqd2RidWJtcm5zeWNmZ3R6aGdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk4NTUzMzgsImV4cCI6MjA4NTQzMTMzOH0.eykyLd6lVu75VZlrIyl-VFDIP37Skoz8uWZxZqBL3J4";
+
 const readEnv = (): SupabaseEnv => {
-  const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID as string | undefined;
+  const projectId =
+    (import.meta.env.VITE_SUPABASE_PROJECT_ID as string | undefined) ??
+    FALLBACK_PROJECT_ID;
+
   const url =
     (import.meta.env.VITE_SUPABASE_URL as string | undefined) ??
-    (projectId ? `https://${projectId}.supabase.co` : undefined);
+    (projectId ? `https://${projectId}.supabase.co` : undefined) ??
+    FALLBACK_URL;
 
   const key =
     (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ??
     (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined) ??
-    (import.meta.env.VITE_SUPABASE_ANON as string | undefined);
+    (import.meta.env.VITE_SUPABASE_ANON as string | undefined) ??
+    FALLBACK_PUBLISHABLE_KEY;
 
   return { url, key, projectId };
 };
