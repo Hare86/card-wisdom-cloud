@@ -357,8 +357,9 @@ export default function Upload() {
 
   // (callbacks reordered above to avoid TDZ / "used before declaration" errors)
 
-  const parseDocument = async (file: UploadedFile, providedPassword?: string) => {
-    if (!user) return;
+  // Returns: { success: boolean, errorCode?: string } to allow callers to handle outcomes
+  const parseDocument = async (file: UploadedFile, providedPassword?: string): Promise<{ success: boolean; errorCode?: string }> => {
+    if (!user) return { success: false, errorCode: "NO_USER" };
 
     console.log("[DEBUG] parseDocument START for file:", file.file_name, "providedPassword:", !!providedPassword);
 
@@ -402,9 +403,9 @@ export default function Upload() {
 
       // Incorrect password: keep dialog open and show a clear message
       if (response.data?.error === "INVALID_PASSWORD") {
-        console.log("[DEBUG] INVALID_PASSWORD detected - throwing error to keep dialog open");
+        console.log("[DEBUG] INVALID_PASSWORD detected - returning error");
         setIsParsing(null);
-        throw new Error("INVALID_PASSWORD");
+        return { success: false, errorCode: "INVALID_PASSWORD" };
       }
 
       // Check for password requirement - now returned as 200 with error field
@@ -425,7 +426,7 @@ export default function Upload() {
           title: "Password Required",
           description: "This PDF is password protected. Please enter the password.",
         });
-        return;
+        return { success: false, errorCode: "PASSWORD_REQUIRED" };
       }
 
       // Check for structured error responses from the edge function
@@ -443,7 +444,7 @@ export default function Upload() {
           description: parsedError.userMessage,
         });
         setIsParsing(null);
-        return;
+        return { success: false, errorCode: response.data.error };
       }
 
       // Throw if there's an actual error
@@ -475,15 +476,17 @@ export default function Upload() {
       });
 
       fetchUploadedFiles();
+      setIsParsing(null);
+      return { success: true };
     } catch (error) {
       console.error("[DEBUG] Parse error caught:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to parse document. Please try again.";
       console.log("[DEBUG] Error message:", errorMessage);
 
       if (errorMessage.includes("INVALID_PASSWORD")) {
-        console.log("[DEBUG] INVALID_PASSWORD in catch - rethrowing");
+        console.log("[DEBUG] INVALID_PASSWORD in catch");
         setIsParsing(null);
-        throw error;
+        return { success: false, errorCode: "INVALID_PASSWORD" };
       }
 
       // Check for password requirement in error
@@ -496,7 +499,7 @@ export default function Upload() {
           title: "Password Required",
           description: "This PDF is password protected. Please enter the password.",
         });
-        return;
+        return { success: false, errorCode: "PASSWORD_REQUIRED" };
       }
 
       // Map the error to user-friendly format
@@ -513,6 +516,7 @@ export default function Upload() {
         description: parsedError.userMessage,
       });
       setIsParsing(null);
+      return { success: false, errorCode: parsedError.code };
     }
   };
 
@@ -525,24 +529,53 @@ export default function Upload() {
     console.log("[DEBUG] handlePasswordSubmit START for file:", pendingPasswordFile.file_name);
     setIsSubmittingPassword(true);
 
-    try {
-      // Parse with provided password
-      await parseDocument(pendingPasswordFile, password);
+    // Parse with provided password and check result
+    const result = await parseDocument(pendingPasswordFile, password);
 
-      console.log("[DEBUG] Password submit SUCCESS - closing dialog");
-      // Clear dialog state
-      setPasswordDialogOpen(false);
-      setPassword("");
-      setPendingPasswordFile(null);
-    } catch (error) {
-      console.log("[DEBUG] Password submit FAILED - keeping dialog open");
+    setIsSubmittingPassword(false);
+
+    // Handle different outcomes based on returned result
+    if (result.errorCode === "INVALID_PASSWORD") {
+      console.log("[DEBUG] Invalid password - keeping dialog open");
       toast({
         variant: "destructive",
         title: "Invalid password",
         description: "The password you entered is incorrect. Please try again.",
       });
-    } finally {
-      setIsSubmittingPassword(false);
+      // Keep dialog open for retry
+      return;
+    }
+
+    if (result.errorCode === "ENCRYPTED_UNSUPPORTED") {
+      console.log("[DEBUG] Encryption not supported - closing dialog with specific error");
+      setPasswordDialogOpen(false);
+      setPassword("");
+      setPendingPasswordFile(null);
+      setShowPassword(false);
+      toast({
+        variant: "destructive",
+        title: "Encryption Not Supported",
+        description: "Please unlock this PDF using Adobe Acrobat or another tool, then re-upload the unlocked version.",
+      });
+      return;
+    }
+
+    if (!result.success && result.errorCode) {
+      console.log("[DEBUG] Parse failed with error:", result.errorCode, "- closing dialog");
+      // Close dialog for other errors (error alert will be shown on page)
+      setPasswordDialogOpen(false);
+      setPassword("");
+      setPendingPasswordFile(null);
+      setShowPassword(false);
+      return;
+    }
+
+    if (result.success) {
+      console.log("[DEBUG] Password submit SUCCESS - closing dialog");
+      setPasswordDialogOpen(false);
+      setPassword("");
+      setPendingPasswordFile(null);
+      setShowPassword(false);
     }
   };
 
