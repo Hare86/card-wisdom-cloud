@@ -571,11 +571,68 @@ serve(async (req) => {
       console.error("[PARSE] Update error:", updateError);
     }
 
-    // Insert transactions
+    // Create or update credit card entry
+    // First check if card already exists for this user with same bank/card name
+    const { data: existingCards } = await supabase
+      .from("credit_cards")
+      .select("id, points")
+      .eq("user_id", userId)
+      .eq("bank_name", finalBankName)
+      .eq("card_name", finalCardName)
+      .limit(1);
+
+    let cardId: string;
+    const variantOptions: ("emerald" | "gold" | "platinum")[] = ["emerald", "gold", "platinum"];
+    const randomVariant = variantOptions[Math.floor(Math.random() * variantOptions.length)];
+
+    if (existingCards && existingCards.length > 0) {
+      // Update existing card with new points
+      cardId = existingCards[0].id;
+      const newPoints = (existingCards[0].points || 0) + totalPoints;
+      
+      const { error: cardUpdateError } = await supabase
+        .from("credit_cards")
+        .update({ 
+          points: newPoints,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", cardId);
+
+      if (cardUpdateError) {
+        console.error("[PARSE] Card update error:", cardUpdateError);
+      } else {
+        console.log(`[PARSE] Updated existing card ${cardId} with ${totalPoints} new points`);
+      }
+    } else {
+      // Create new card entry
+      const { data: newCard, error: cardInsertError } = await supabase
+        .from("credit_cards")
+        .insert({
+          user_id: userId,
+          bank_name: finalBankName,
+          card_name: finalCardName,
+          points: totalPoints,
+          point_value: 0.4, // Default point value
+          variant: randomVariant,
+        })
+        .select("id")
+        .single();
+
+      if (cardInsertError) {
+        console.error("[PARSE] Card insert error:", cardInsertError);
+        cardId = ""; // Fallback
+      } else {
+        cardId = newCard?.id || "";
+        console.log(`[PARSE] Created new card ${cardId} for ${finalBankName} ${finalCardName}`);
+      }
+    }
+
+    // Insert transactions with card_id
     if (transactions.length > 0) {
       const transactionInserts = transactions.map((tx) => ({
         user_id: userId,
         document_id: documentId,
+        card_id: cardId || null,
         transaction_date: tx.date || new Date().toISOString().split("T")[0],
         description: tx.description,
         amount: tx.amount,
