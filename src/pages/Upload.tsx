@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { validatePDFFile, mapServerError, type PDFParseError } from "@/lib/pdf-validation";
 import { PDFErrorAlert } from "@/components/upload/PDFErrorAlert";
+import { PDFUnlockGuide } from "@/components/upload/PDFUnlockGuide";
 
 interface ParsedData {
   transaction_count?: number;
@@ -113,6 +114,9 @@ export default function Upload() {
   
   // PDF parsing error state for displaying actionable errors
   const [parseError, setParseError] = useState<(PDFParseError & { fileName?: string }) | null>(null);
+  
+  // Show unlock guide for encrypted PDFs that need external unlocking
+  const [showUnlockGuide, setShowUnlockGuide] = useState<{ show: boolean; fileName?: string }>({ show: false });
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -321,6 +325,7 @@ export default function Upload() {
     e.preventDefault();
     setIsDragging(false);
     setParseError(null); // Clear previous errors
+    setShowUnlockGuide({ show: false }); // Clear unlock guide
     
     const files = Array.from(e.dataTransfer.files).filter(
       (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith('.pdf')
@@ -345,6 +350,7 @@ export default function Upload() {
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setParseError(null); // Clear previous errors
+    setShowUnlockGuide({ show: false }); // Clear unlock guide
     const files = e.target.files ? Array.from(e.target.files) : [];
     
     if (files.length > 0) {
@@ -547,15 +553,17 @@ export default function Upload() {
     }
 
     if (result.errorCode === "ENCRYPTED_UNSUPPORTED") {
-      console.log("[DEBUG] Encryption not supported - closing dialog with specific error");
+      console.log("[DEBUG] Encryption not supported - closing dialog and showing unlock guide");
       setPasswordDialogOpen(false);
       setPassword("");
       setPendingPasswordFile(null);
       setShowPassword(false);
+      // Show the unlock guide instead of just a toast
+      setShowUnlockGuide({ show: true, fileName: pendingPasswordFile.file_name });
       toast({
         variant: "destructive",
         title: "Encryption Not Supported",
-        description: "Please unlock this PDF using Adobe Acrobat or another tool, then re-upload the unlocked version.",
+        description: "Please unlock this PDF using an external tool, then re-upload.",
       });
       return;
     }
@@ -660,6 +668,16 @@ export default function Upload() {
             Upload any bank's credit card statement - AI adapts to all formats automatically
           </p>
         </div>
+
+        {/* Unlock Guide - shown when PDF encryption is not supported */}
+        {showUnlockGuide.show && (
+          <div className="mb-6">
+            <PDFUnlockGuide
+              fileName={showUnlockGuide.fileName}
+              onDismiss={() => setShowUnlockGuide({ show: false })}
+            />
+          </div>
+        )}
 
         {/* Error Alert */}
         {parseError && (
