@@ -111,10 +111,7 @@ serve(async (req) => {
     }
 
     // Step 3: Select appropriate model
-    const { model: selectedModel, reason } = selectModel(
-      taskType as string,
-      contextSection.length
-    );
+    const { model: selectedModel, reason } = selectModel(taskType, contextSection.length);
     console.log(`Selected model: ${selectedModel} (${reason})`);
 
     // Step 4: Build prompt with context

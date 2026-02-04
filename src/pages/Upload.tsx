@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/safeClient";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { MobileNav } from "@/components/dashboard/MobileNav";
 import { Button } from "@/components/ui/button";
@@ -57,7 +57,8 @@ interface UploadedFile {
   file_path: string;
   created_at: string;
   document_type: string;
-  parsed_data: ParsedData | null;
+  // Stored as JSON in the backend; can be any JSON type.
+  parsed_data: unknown;
 }
 
 const CARD_OPTIONS = [
@@ -119,6 +120,158 @@ export default function Upload() {
     }
   }, [user, authLoading, navigate]);
 
+  const fetchUploadedFiles = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("pdf_documents")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setUploadedFiles(data || []);
+    } catch (error) {
+      console.error("Error fetching files:", error);
+    } finally {
+      setLoadingFiles(false);
+    }
+  }, []);
+
+  // Check if uploaded PDF is password-protected
+  const checkPasswordProtection = useCallback(async (file: UploadedFile) => {
+    try {
+      console.log("[DEBUG] checkPasswordProtection START for file:", file.file_name, "ID:", file.id);
+
+      toast({
+        title: "Checking document...",
+        description: "Detecting if password is required...",
+      });
+
+      const { data, error } = await supabase.functions.invoke("check-pdf-password", {
+        body: {
+          filePath: file.file_path,
+          documentId: file.id,
+        },
+      });
+
+      console.log("[DEBUG] check-pdf-password response:", { data, error });
+
+      if (error) {
+        console.error("[DEBUG] Password check error:", error);
+        toast({
+          title: "File uploaded",
+          description: `${file.file_name} ready. Click "Parse" to extract data.`,
+        });
+        return;
+      }
+
+      console.log("[DEBUG] isPasswordProtected value:", data?.isPasswordProtected);
+
+      if (data?.isPasswordProtected === true) {
+        console.log("[DEBUG] PDF IS PASSWORD PROTECTED - Opening dialog");
+        setPendingPasswordFile(file);
+        setPasswordDialogOpen(true);
+        toast({
+          title: "Password Required",
+          description: "This PDF is password protected. Please enter the password to continue.",
+        });
+      } else {
+        toast({
+          title: "File uploaded",
+          description: `${file.file_name} ready. Click "Parse" to extract data.`,
+        });
+      }
+    } catch (error) {
+      console.error("[DEBUG] Password check exception:", error);
+      toast({
+        title: "File uploaded",
+        description: `${file.file_name} ready. Click "Parse" to extract data.`,
+      });
+    }
+  }, [toast]);
+
+  const validateFilesBeforeUpload = useCallback(async (files: File[]): Promise<File[]> => {
+    const validFiles: File[] = [];
+
+    for (const file of files) {
+      const validation = await validatePDFFile(file);
+
+      if (!validation.isValid) {
+        setParseError({
+          code:
+            (validation.errorCode as unknown as import("@/lib/pdf-validation").PDFParseError["code"]) ||
+            "UNKNOWN_ERROR",
+          message: validation.errorMessage || "",
+          userMessage: validation.errorMessage || "File validation failed",
+          suggestedAction: validation.suggestedAction || "Please try a different file.",
+          fileName: file.name,
+        });
+
+        toast({
+          variant: "destructive",
+          title: "Invalid PDF file",
+          description: `${file.name}: ${validation.errorMessage}`,
+        });
+      } else {
+        validFiles.push(file);
+      }
+    }
+
+    return validFiles;
+  }, [toast]);
+
+  const uploadFiles = useCallback(async (files: File[]) => {
+    if (!user) return;
+
+    setIsUploading(true);
+
+    for (const file of files) {
+      try {
+        const filePath = `${user.id}/${Date.now()}-${file.name}`;
+
+        // Upload to storage
+        const { error: uploadError } = await supabase.storage
+          .from("pdf-documents")
+          .upload(filePath, file);
+
+        if (uploadError) throw uploadError;
+
+        // Save metadata to database
+        const { data: docData, error: dbError } = await supabase
+          .from("pdf_documents")
+          .insert({
+            user_id: user.id,
+            file_name: file.name,
+            file_path: filePath,
+            file_size: file.size,
+            document_type: "statement",
+          })
+          .select()
+          .single();
+
+        if (dbError) throw dbError;
+
+        toast({
+          title: "File uploaded",
+          description: `${file.name} uploaded. Checking document...`,
+        });
+
+        // Immediately check if PDF is password-protected
+        await checkPasswordProtection(docData as unknown as UploadedFile);
+
+        await fetchUploadedFiles();
+      } catch (error) {
+        console.error("Upload error:", error);
+        toast({
+          variant: "destructive",
+          title: "Upload failed",
+          description: `Failed to upload ${file.name}. Please try again.`,
+        });
+      }
+    }
+
+    setIsUploading(false);
+  }, [user, toast, fetchUploadedFiles, checkPasswordProtection]);
+
   useEffect(() => {
     if (user) {
       fetchUploadedFiles();
@@ -138,22 +291,6 @@ export default function Upload() {
     }, 60000); // Check every minute
 
     return () => clearInterval(cleanup);
-  }, []);
-
-  const fetchUploadedFiles = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from("pdf_documents")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setUploadedFiles(data || []);
-    } catch (error) {
-      console.error("Error fetching files:", error);
-    } finally {
-      setLoadingFiles(false);
-    }
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -204,146 +341,7 @@ export default function Upload() {
     }
   };
 
-  const validateFilesBeforeUpload = useCallback(async (files: File[]): Promise<File[]> => {
-    const validFiles: File[] = [];
-    
-    for (const file of files) {
-      const validation = await validatePDFFile(file);
-      
-      if (!validation.isValid) {
-        setParseError({
-          code: (validation.errorCode as unknown as import("@/lib/pdf-validation").PDFParseError["code"]) || "UNKNOWN_ERROR",
-          message: validation.errorMessage || '',
-          userMessage: validation.errorMessage || 'File validation failed',
-          suggestedAction: validation.suggestedAction || 'Please try a different file.',
-          fileName: file.name,
-        });
-        
-        toast({
-          variant: "destructive",
-          title: "Invalid PDF file",
-          description: `${file.name}: ${validation.errorMessage}`,
-        });
-      } else {
-        validFiles.push(file);
-      }
-    }
-    
-    return validFiles;
-  }, [toast]);
-
-  const uploadFiles = useCallback(async (files: File[]) => {
-    if (!user) return;
-
-    setIsUploading(true);
-
-    for (const file of files) {
-      try {
-        const filePath = `${user.id}/${Date.now()}-${file.name}`;
-        
-        // Upload to storage
-        const { error: uploadError } = await supabase.storage
-          .from("pdf-documents")
-          .upload(filePath, file);
-
-        if (uploadError) throw uploadError;
-
-        // Save metadata to database
-        const { data: docData, error: dbError } = await supabase
-          .from("pdf_documents")
-          .insert({
-            user_id: user.id,
-            file_name: file.name,
-            file_path: filePath,
-            file_size: file.size,
-            document_type: "statement",
-          })
-          .select()
-          .single();
-
-        if (dbError) throw dbError;
-
-        toast({
-          title: "File uploaded",
-          description: `${file.name} uploaded. Checking document...`,
-        });
-
-        // Immediately check if PDF is password-protected
-        await checkPasswordProtection(docData as UploadedFile);
-
-        fetchUploadedFiles();
-      } catch (error) {
-        console.error("Upload error:", error);
-        toast({
-          variant: "destructive",
-          title: "Upload failed",
-          description: `Failed to upload ${file.name}. Please try again.`,
-        });
-      }
-    }
-    
-    setIsUploading(false);
-  }, [user, toast, fetchUploadedFiles, checkPasswordProtection]);
-
-  // Check if uploaded PDF is password-protected
-  const checkPasswordProtection = useCallback(async (file: UploadedFile) => {
-    try {
-      console.log("[DEBUG] checkPasswordProtection START for file:", file.file_name, "ID:", file.id);
-
-      toast({
-        title: "Checking document...",
-        description: "Detecting if password is required...",
-      });
-
-      const { data, error } = await supabase.functions.invoke("check-pdf-password", {
-        body: {
-          filePath: file.file_path,
-          documentId: file.id,
-        },
-      });
-
-      console.log("[DEBUG] check-pdf-password response:", { data, error });
-
-      if (error) {
-        console.error("[DEBUG] Password check error:", error);
-        toast({
-          title: "File uploaded",
-          description: `${file.file_name} ready. Click "Parse" to extract data.`,
-        });
-        return;
-      }
-
-      console.log("[DEBUG] isPasswordProtected value:", data?.isPasswordProtected);
-
-      if (data?.isPasswordProtected === true) {
-        console.log("[DEBUG] PDF IS PASSWORD PROTECTED - Opening dialog");
-        setPendingPasswordFile(file);
-        setPasswordDialogOpen(true);
-        toast({
-          title: "Password Required",
-          description: "This PDF is password protected. Please enter the password to continue.",
-        });
-      } else if (data?.isPasswordProtected === false) {
-        console.log("[DEBUG] PDF is NOT password protected");
-        toast({
-          title: "File uploaded",
-          description: `${file.file_name} ready. Click "Parse" to extract data.`,
-        });
-      } else {
-        console.log("[DEBUG] Password protection status UNKNOWN (null)");
-        toast({
-          title: "File uploaded",
-          description: `${file.file_name} ready. Click "Parse" to extract data.`,
-        });
-      }
-    } catch (error) {
-      console.error("[DEBUG] Password check exception:", error);
-      toast({
-        title: "File uploaded",
-        description: `${file.file_name} ready. Click "Parse" to extract data.`,
-      });
-    }
-  }, [toast]);
+  // (callbacks reordered above to avoid TDZ / "used before declaration" errors)
 
   const parseDocument = async (file: UploadedFile, providedPassword?: string) => {
     if (!user) return;
@@ -781,23 +779,30 @@ export default function Upload() {
                       </div>
 
                       {/* Parsed Status */}
-                      {file.parsed_data ? (
+                      {(() => {
+                        const parsed =
+                          file.parsed_data && typeof file.parsed_data === "object"
+                            ? (file.parsed_data as ParsedData)
+                            : null;
+
+                        return parsed ? (
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 text-xs text-primary">
                             <CheckCircle2 className="w-4 h-4" />
                             <span>
-                              {file.parsed_data.transaction_count} transactions • {file.parsed_data.total_points_earned} points
+                              {parsed.transaction_count ?? parsed.transactions_parsed ?? 0} transactions •{" "}
+                              {parsed.total_points_earned ?? 0} points
                             </span>
                           </div>
-                          {file.parsed_data.detected_card && (
+                          {parsed.detected_card && (
                             <p className="text-xs text-muted-foreground">
-                              {file.parsed_data.bank_name} {file.parsed_data.card_name}
-                              {file.parsed_data.detected_card.confidence && 
-                                ` (${Math.round(file.parsed_data.detected_card.confidence * 100)}% confidence)`}
+                              {parsed.bank_name} {parsed.card_name}
+                              {parsed.detected_card.confidence &&
+                                ` (${Math.round(parsed.detected_card.confidence * 100)}% confidence)`}
                             </p>
                           )}
                         </div>
-                      ) : (
+                        ) : (
                         <Button
                           size="sm"
                           variant="outline"
@@ -817,7 +822,8 @@ export default function Upload() {
                             </>
                           )}
                         </Button>
-                      )}
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
