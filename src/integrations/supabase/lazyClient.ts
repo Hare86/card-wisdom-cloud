@@ -38,6 +38,7 @@ let cachedClient: SupabaseClient<Database> | null | undefined;
 
 export const getBackendStatus = () => {
   const { url, key, projectId } = readEnv();
+  // With fallbacks, these should always be present
   const ready = Boolean(url && key);
   const reason = ready
     ? undefined
@@ -45,6 +46,7 @@ export const getBackendStatus = () => {
       ? "Missing backend URL"
       : "Missing backend publishable key";
 
+  console.log("[Backend Status]", { ready, url: url?.substring(0, 30), keyPresent: Boolean(key), projectId });
   return { ready, reason, urlPresent: Boolean(url), keyPresent: Boolean(key), projectIdPresent: Boolean(projectId) };
 };
 
