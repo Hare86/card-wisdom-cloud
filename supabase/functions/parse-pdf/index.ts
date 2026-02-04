@@ -9,11 +9,11 @@ const corsHeaders = {
 
 // ============================================================================
 // PASSWORD-PROTECTED PDF HANDLING
-// Deno edge functions have limitations with PDF decryption libraries.
-// We use a detection + guidance approach:
+// Uses n8n external worker for PDF decryption when password is provided.
+// Flow:
 // 1. Detect if PDF is encrypted (binary markers)
-// 2. If password provided, inform user about limitations
-// 3. Suggest using external PDF unlock tools
+// 2. If password provided → call n8n webhook to decrypt
+// 3. Continue parsing with unlocked PDF
 // ============================================================================
 
 /**
@@ -36,6 +36,78 @@ function isPdfPasswordProtected(pdfData: Uint8Array): boolean {
   }
   
   return isEncrypted;
+}
+
+/**
+ * Decrypt password-protected PDF using n8n external worker
+ * Returns decrypted PDF as base64 string
+ */
+async function decryptPdfViaN8n(
+  pdfBase64: string,
+  password: string
+): Promise<{ success: boolean; unlockedPdfBase64?: string; error?: string }> {
+  const N8N_DECRYPT_WEBHOOK_URL = Deno.env.get("N8N_DECRYPT_WEBHOOK_URL");
+  
+  if (!N8N_DECRYPT_WEBHOOK_URL) {
+    console.log("[DECRYPT] N8N_DECRYPT_WEBHOOK_URL not configured - falling back to manual unlock guidance");
+    return { 
+      success: false, 
+      error: "DECRYPT_NOT_CONFIGURED" 
+    };
+  }
+
+  console.log("[DECRYPT] Calling n8n decrypt webhook...");
+
+  try {
+    const response = await fetch(N8N_DECRYPT_WEBHOOK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        pdfBase64,
+        password,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("[DECRYPT] n8n webhook error:", response.status);
+      return { 
+        success: false, 
+        error: `Decrypt service error: ${response.status}` 
+      };
+    }
+
+    const result = await response.json();
+    
+    if (result.success && result.unlockedPdfBase64) {
+      console.log("[DECRYPT] PDF decrypted successfully via n8n");
+      return {
+        success: true,
+        unlockedPdfBase64: result.unlockedPdfBase64,
+      };
+    }
+
+    // Handle specific error codes from n8n
+    if (result.error === "WRONG_PASSWORD") {
+      return { success: false, error: "WRONG_PASSWORD" };
+    }
+    if (result.error === "NOT_ENCRYPTED") {
+      return { success: false, error: "NOT_ENCRYPTED" };
+    }
+
+    return { 
+      success: false, 
+      error: result.message || "Decryption failed" 
+    };
+
+  } catch (error) {
+    console.error("[DECRYPT] n8n webhook call failed:", error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : "Network error" 
+    };
+  }
 }
 
 // ============================================================================
@@ -300,31 +372,58 @@ async function extractRawTextFromPDF(
     throw new Error("LOVABLE_API_KEY is not configured");
   }
 
-  // If password is provided and PDF is encrypted, we cannot decrypt in edge functions
-  // Deno edge environment has limitations with PDF decryption libraries
+  // If password is provided and PDF is encrypted, try n8n decryption first
   if (password && pdfBytes) {
     console.log("[PHASE 1A] Password provided - checking if PDF is encrypted...");
     
     const isEncrypted = isPdfPasswordProtected(pdfBytes);
     
     if (isEncrypted) {
-      console.log("[PHASE 1A] PDF is encrypted - edge functions cannot decrypt PDFs");
-      console.log("[PHASE 1A] User needs to unlock PDF externally and re-upload");
+      console.log("[PHASE 1A] PDF is encrypted - attempting n8n decryption...");
       
-      // Unfortunately, Deno edge functions cannot reliably decrypt password-protected PDFs
-      // The user needs to unlock the PDF using an external tool
-      const err = new Error("ENCRYPTED_UNSUPPORTED");
-      (err as unknown as Record<string, unknown>).pdfErrorInfo = {
-        code: "ENCRYPTED_UNSUPPORTED",
-        userMessage: "This PDF is password-protected. Unfortunately, our system cannot decrypt PDFs directly. Please use an online PDF unlock tool to remove the password protection, then re-upload the unlocked file.",
-        suggestedAction: "Use iLovePDF (https://www.ilovepdf.com/unlock_pdf), Smallpdf, or Adobe Acrobat to unlock the PDF first",
-        recoverable: true,
-      };
-      throw err;
+      // Try to decrypt via n8n external worker
+      const decryptResult = await decryptPdfViaN8n(pdfBase64, password);
+      
+      if (decryptResult.success && decryptResult.unlockedPdfBase64) {
+        // Successfully decrypted! Use the unlocked PDF for extraction
+        console.log("[PHASE 1A] Using decrypted PDF for OCR extraction");
+        pdfBase64 = decryptResult.unlockedPdfBase64;
+        // Continue to OCR extraction below with unlocked PDF
+      } else if (decryptResult.error === "WRONG_PASSWORD") {
+        const err = new Error("WRONG_PASSWORD");
+        (err as unknown as Record<string, unknown>).pdfErrorInfo = {
+          code: "WRONG_PASSWORD",
+          userMessage: "The password you entered is incorrect. Please try again with the correct password.",
+          recoverable: true,
+        };
+        throw err;
+      } else if (decryptResult.error === "DECRYPT_NOT_CONFIGURED") {
+        // n8n not configured - fall back to manual unlock guidance
+        console.log("[PHASE 1A] n8n decrypt not configured - showing manual unlock guide");
+        const err = new Error("ENCRYPTED_UNSUPPORTED");
+        (err as unknown as Record<string, unknown>).pdfErrorInfo = {
+          code: "ENCRYPTED_UNSUPPORTED",
+          userMessage: "This PDF is password-protected. Please use an online PDF unlock tool to remove the password protection, then re-upload the unlocked file.",
+          suggestedAction: "Use iLovePDF (https://www.ilovepdf.com/unlock_pdf), Smallpdf, or Adobe Acrobat to unlock the PDF first",
+          recoverable: true,
+        };
+        throw err;
+      } else {
+        // General decryption failure
+        console.error("[PHASE 1A] Decryption failed:", decryptResult.error);
+        const err = new Error("DECRYPT_FAILED");
+        (err as unknown as Record<string, unknown>).pdfErrorInfo = {
+          code: "DECRYPT_FAILED",
+          userMessage: `Failed to decrypt PDF: ${decryptResult.error}. Please try unlocking the PDF manually.`,
+          suggestedAction: "Use iLovePDF or Adobe Acrobat to unlock the PDF first",
+          recoverable: true,
+        };
+        throw err;
+      }
+    } else {
+      // PDF has password in request but isn't actually encrypted - proceed normally
+      console.log("[PHASE 1A] PDF is not encrypted despite password being provided, proceeding with OCR");
     }
-    
-    // PDF has password in request but isn't actually encrypted - proceed normally
-    console.log("[PHASE 1A] PDF is not encrypted despite password being provided, proceeding with OCR");
   }
 
   // No password - use AI OCR (better for image-based PDFs)

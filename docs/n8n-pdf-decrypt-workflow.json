@@ -1,0 +1,92 @@
+{
+  "name": "PDF Decrypt Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "decrypt-pdf",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "decrypt-pdf"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PDF Decryption using pdf-lib\n// Receives base64 PDF + password, returns unlocked base64 PDF\n\nconst { PDFDocument } = require('pdf-lib');\n\nconst inputData = $input.first().json;\nconst { pdfBase64, password } = inputData;\n\nif (!pdfBase64) {\n  return [{ json: { success: false, error: 'No PDF data provided' } }];\n}\n\nif (!password) {\n  return [{ json: { success: false, error: 'No password provided' } }];\n}\n\ntry {\n  // Decode base64 to bytes\n  const pdfBytes = Buffer.from(pdfBase64, 'base64');\n  \n  // Load PDF with password\n  const pdfDoc = await PDFDocument.load(pdfBytes, {\n    password: password,\n    ignoreEncryption: false,\n  });\n  \n  // Save without encryption (removes password protection)\n  const unlockedBytes = await pdfDoc.save({\n    useObjectStreams: false,\n  });\n  \n  // Convert back to base64\n  const unlockedBase64 = Buffer.from(unlockedBytes).toString('base64');\n  \n  return [{\n    json: {\n      success: true,\n      unlockedPdfBase64: unlockedBase64,\n      pageCount: pdfDoc.getPageCount(),\n      message: 'PDF decrypted successfully'\n    }\n  }];\n  \n} catch (error) {\n  // Handle specific pdf-lib errors\n  const errorMessage = error.message || 'Unknown error';\n  \n  if (errorMessage.includes('password') || errorMessage.includes('decrypt')) {\n    return [{\n      json: {\n        success: false,\n        error: 'WRONG_PASSWORD',\n        message: 'The password provided is incorrect'\n      }\n    }];\n  }\n  \n  if (errorMessage.includes('not encrypted')) {\n    return [{\n      json: {\n        success: false,\n        error: 'NOT_ENCRYPTED',\n        message: 'This PDF is not password-protected'\n      }\n    }];\n  }\n  \n  return [{\n    json: {\n      success: false,\n      error: 'DECRYPT_FAILED',\n      message: errorMessage\n    }\n  }];\n}"
+      },
+      "id": "code-decrypt",
+      "name": "Decrypt PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        680,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Decrypt PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decrypt PDF": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0
+}
