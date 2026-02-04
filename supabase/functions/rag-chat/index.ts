@@ -112,7 +112,7 @@ serve(async (req) => {
 
     // Step 3: Select appropriate model
     const { model: selectedModel, reason } = selectModel(
-      taskType as any,
+      taskType as string,
       contextSection.length
     );
     console.log(`Selected model: ${selectedModel} (${reason})`);

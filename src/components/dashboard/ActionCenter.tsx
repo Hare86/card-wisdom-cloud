@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle, TrendingUp, Sparkles, ArrowRight, Maximize2, Loader2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -68,13 +68,7 @@ export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterP
     success: "text-primary bg-primary/20",
   };
 
-  useEffect(() => {
-    if (user) {
-      fetchActions();
-    }
-  }, [user, selectedCardId]);
-
-  const fetchActions = async () => {
+  const fetchActions = useCallback(async () => {
     try {
       setLoading(true);
       
@@ -113,7 +107,13 @@ export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterP
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedCardId]);
+
+  useEffect(() => {
+    if (user) {
+      fetchActions();
+    }
+  }, [user, fetchActions]);
 
   const handleActionClick = async (action: Action) => {
     // If there's a custom action URL, navigate there

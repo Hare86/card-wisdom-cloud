@@ -112,13 +112,7 @@ export default function Transactions() {
     }
   }, [user, authLoading, navigate]);
 
-  useEffect(() => {
-    if (user) {
-      fetchData();
-    }
-  }, [user]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const [txRes, cardRes] = await Promise.all([
@@ -160,7 +154,13 @@ export default function Transactions() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
+
+  useEffect(() => {
+    if (user) {
+      fetchData();
+    }
+  }, [user, fetchData]);
 
   // Filter transactions
   const filteredTransactions = useMemo(() => {

@@ -57,7 +57,7 @@ interface ComplianceData {
     pii_always_masked: boolean;
   };
   pii_types_found: Record<string, number>;
-  gdpr_compliance: Record<string, any>;
+  gdpr_compliance: Record<string, boolean>;
   pci_dss_alignment: Record<string, boolean>;
 }
 
@@ -93,13 +93,7 @@ export default function Analytics() {
     }
   }, [user, authLoading, navigate]);
 
-  useEffect(() => {
-    if (user) {
-      fetchAnalytics();
-    }
-  }, [user]);
-
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
     setLoading(true);
     try {
       const [tokenRes, evalRes, compRes, roiRes] = await Promise.all([
@@ -123,7 +117,13 @@ export default function Analytics() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, toast]);
+
+  useEffect(() => {
+    if (user) {
+      fetchAnalytics();
+    }
+  }, [user, fetchAnalytics]);
 
   if (authLoading || loading) {
     return (

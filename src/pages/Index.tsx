@@ -232,7 +232,7 @@ const Index = () => {
     } else {
       setSelectedCard(null);
     }
-  }, [cards]);
+  }, [cards, selectedCard]);
 
   useEffect(() => {
     if (!loading && !user) {

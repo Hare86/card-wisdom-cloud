@@ -126,7 +126,7 @@ serve(async (req) => {
         acc[e.model_used].relevance += Number(e.relevance_score || 0);
         acc[e.model_used].latency += e.latency_ms || 0;
         return acc;
-      }, {} as Record<string, any>);
+      }, {} as Record<string, { count: number; faithfulness: number; relevance: number; latency: number }>);
 
       // Calculate averages
       Object.keys(byModel || {}).forEach((model) => {
@@ -212,7 +212,7 @@ serve(async (req) => {
         if (log.pii_accessed) acc[log.action].pii_accessed++;
         if (log.pii_masked) acc[log.action].pii_masked++;
         return acc;
-      }, {} as Record<string, any>);
+      }, {} as Record<string, { count: number; pii_accessed: number; pii_masked: number }>);
 
       return new Response(
         JSON.stringify({

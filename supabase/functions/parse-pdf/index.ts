@@ -214,7 +214,7 @@ function calculatePoints(amount: number, category: string, cardName: string): nu
 const NAME_VALIDATION = {
   minLength: 2,
   maxLength: 100,
-  validPattern: /^[a-zA-Z0-9\s\-\.&'()]+$/,
+  validPattern: /^[a-zA-Z0-9\s\-.&'()]+$/,
   invalidNames: ["unknown", "null", "undefined", "none", "n/a", "test", "default", "card", "bank"],
 };
 
@@ -222,7 +222,7 @@ function sanitizeName(name: string): string {
   if (!name) return "";
   let sanitized = name.trim().replace(/\s+/g, " ");
   // Remove any potential XSS or injection characters
-  sanitized = sanitized.replace(/[<>\"'`;\\]/g, "");
+  sanitized = sanitized.replace(/[<>"'`;\\]/g, "");
   if (sanitized.length > NAME_VALIDATION.maxLength) {
     sanitized = sanitized.substring(0, NAME_VALIDATION.maxLength);
   }
@@ -237,7 +237,7 @@ function validateName(name: string, type: "card" | "bank" | "cardholder"): { isV
   }
   
   if (!NAME_VALIDATION.validPattern.test(sanitized)) {
-    return { isValid: false, error: `${type} name contains invalid characters`, sanitized: sanitized.replace(/[^a-zA-Z0-9\s\-\.&'()]/g, "") };
+    return { isValid: false, error: `${type} name contains invalid characters`, sanitized: sanitized.replace(/[^a-zA-Z0-9\s\-.&'()]/g, "") };
   }
   
   if (NAME_VALIDATION.invalidNames.includes(sanitized.toLowerCase())) {
@@ -260,6 +260,15 @@ interface PreExtractionResult {
   extractionMethod: "ocr_with_inline_filter" | "structured_extraction";
   auditTrail: PIIAuditEntry[];
   ocrTokensUsed: { input: number; output: number };
+}
+
+interface ParsedResponse {
+  layoutFeatures?: string[];
+  bankName?: string;
+  cardName?: string;
+  statementPeriod?: { start?: string; end?: string };
+  transactions?: Array<{ date?: string; description?: string; amount?: number | string; merchant?: string }>;
+  confidence?: number;
 }
 
 interface PIIAuditEntry {
@@ -304,7 +313,7 @@ async function extractRawTextFromPDF(
       // Unfortunately, AI models cannot decrypt password-protected PDFs
       // The user needs to unlock the PDF using a tool like Adobe Acrobat
       const err = new Error("ENCRYPTED_UNSUPPORTED");
-      (err as any).pdfErrorInfo = {
+      (err as unknown as Record<string, unknown>).pdfErrorInfo = {
         code: "ENCRYPTED_UNSUPPORTED",
         userMessage: "This PDF is password-protected. AI cannot decrypt PDFs directly. Please unlock the PDF first using Adobe Acrobat or an online PDF unlock tool, then upload the unlocked version.",
         suggestedAction: "Use Adobe Acrobat, Smallpdf, or iLovePDF to remove the password protection, then re-upload",
@@ -444,7 +453,7 @@ const PDF_ERROR_CODES = {
  */
 function classifyPDFError(err: unknown): PDFErrorInfo {
   const msg = err instanceof Error ? err.message : String(err);
-  const name = err && typeof err === "object" ? (err as any).name : undefined;
+  const name = err && typeof err === "object" ? (err as unknown as { name?: string }).name : undefined;
   const msgLower = msg.toLowerCase();
 
   // Password-related errors
@@ -809,7 +818,7 @@ function applyComprehensivePIIMasking(
     },
     // Date of Birth
     dob: {
-      pattern: /\b(?:DOB|Date of Birth|D\.O\.B\.?|Birth Date)[:\s]*\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}\b/gi,
+      pattern: new RegExp('\\b(?:DOB|Date of Birth|D\\.O\\.B\\.?|Birth Date)[:\\s]*\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b', 'gi'),
       replacement: "DOB: XX/XX/XXXX",
       priority: 5,
     },
@@ -861,7 +870,7 @@ function applyComprehensivePIIMasking(
 async function extractWithAdaptiveAI(
   maskedText: string,
   preMaskingStats: PreExtractionResult,
-  existingTemplates?: any[]
+  existingTemplates?: unknown[]
 ): Promise<{ data: ExtractedData; rawResponse: string; tokensUsed: { input: number; output: number }; preMaskingStats: PreExtractionResult }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
@@ -946,13 +955,13 @@ Parse ALL visible transactions. For amounts, use positive numbers (debits as pos
   };
 
   // Parse and validate response
-  let parsed: any;
+  let parsed: ParsedResponse;
   try {
     let cleanContent = content.trim();
     if (cleanContent.startsWith("```json")) cleanContent = cleanContent.slice(7);
     if (cleanContent.startsWith("```")) cleanContent = cleanContent.slice(3);
     if (cleanContent.endsWith("```")) cleanContent = cleanContent.slice(0, -3);
-    parsed = JSON.parse(cleanContent.trim());
+    parsed = JSON.parse(cleanContent.trim()) as ParsedResponse;
   } catch (e) {
     console.error("Failed to parse AI response:", e, content);
     throw new Error("Failed to parse statement. The format may not be supported.");
@@ -1009,7 +1018,7 @@ Parse ALL visible transactions. For amounts, use positive numbers (debits as pos
 // ============================================================================
 
 async function learnTemplate(
-  supabase: any,
+  supabase: { from: (table: string) => { select: (cols?: string) => Promise<unknown>; eq?: (col: string, val: unknown) => unknown; single?: () => unknown }; },
   bankName: string,
   templateSignature: string,
   layoutFeatures: string[],
@@ -1060,7 +1069,7 @@ async function learnTemplate(
 // ============================================================================
 
 async function logExtractionAudit(
-  supabase: any,
+  supabase: { from: (table: string) => { insert: (row: Record<string, unknown>) => Promise<unknown> } & Record<string, unknown>; },
   userId: string,
   documentId: string,
   params: {
@@ -1105,7 +1114,7 @@ async function logExtractionAudit(
  * Log detailed PII masking audit for compliance
  */
 async function logPIIAudit(
-  supabase: any,
+  supabase: { from: (table: string) => { insert: (row: Record<string, unknown>) => Promise<unknown> } & Record<string, unknown>; },
   userId: string,
   documentId: string,
   auditTrail: PIIAuditEntry[],
@@ -1148,7 +1157,17 @@ serve(async (req) => {
   }
 
   const startTime = Date.now();
-  let auditParams: any = {
+  const auditParams: {
+    extractionMethod: string;
+    confidenceScore: number;
+    fieldsExtracted: number;
+    piiFieldsMasked: number;
+    processingTimeMs: number;
+    llmModelUsed: string;
+    llmTokensInput: number;
+    llmTokensOutput: number;
+    passwordProtected: boolean;
+  } = {
     extractionMethod: "adaptive_ai_two_layer_masking",
     confidenceScore: 0,
     fieldsExtracted: 0,
@@ -1275,7 +1294,7 @@ serve(async (req) => {
       
     } catch (e) {
       // Get detailed error info if available
-      const errorInfo = (e as any).pdfErrorInfo as PDFErrorInfo | undefined;
+      const errorInfo = (e as unknown as Record<string, unknown>).pdfErrorInfo as PDFErrorInfo | undefined;
       const errorCode = e instanceof Error ? e.message : "UNKNOWN_ERROR";
       
       // Handle specific error codes with user-friendly responses

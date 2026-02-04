@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { Maximize2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,13 +48,7 @@ export function CategoryBreakdown({ selectedCardId, selectedCardName }: Category
   const [totalSpend, setTotalSpend] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (user) {
-      fetchCategoryData();
-    }
-  }, [user, selectedCardId]);
-
-  const fetchCategoryData = async () => {
+  const fetchCategoryData = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -102,7 +96,13 @@ export function CategoryBreakdown({ selectedCardId, selectedCardName }: Category
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, selectedCardId]);
+
+  useEffect(() => {
+    if (user) {
+      fetchCategoryData();
+    }
+  }, [user, fetchCategoryData]);
 
   if (loading) {
     return (
