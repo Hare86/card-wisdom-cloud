@@ -31,11 +31,11 @@ export function selectModel(taskType: TaskType, contextLength: number): ModelSel
     };
   }
 
-  // Simple Q&A or chat
+  // Chat - use fast model for responsiveness
   if (taskType === "chat") {
     return {
-      model: "google/gemini-2.5-flash",
-      reason: "Standard chat interaction",
+      model: "google/gemini-3-flash-preview",
+      reason: "Fast chat interaction",
     };
   }
 
