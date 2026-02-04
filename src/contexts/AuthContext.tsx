@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { User, Session } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/safeClient";
+import { getBackendStatus, getSupabaseClient } from "@/integrations/supabase/lazyClient";
 
 interface AuthContextType {
   user: User | null;
@@ -22,6 +22,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
+    const sb = getSupabaseClient();
+    if (!sb) {
+      const status = getBackendStatus();
+      console.warn("Backend not configured; auth disabled:", status);
+      setLoading(false);
+      return;
+    }
+
     // Set timeout to prevent infinite loading
     const timeout = setTimeout(() => {
       if (mounted) {
@@ -31,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, 3000);
 
     // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+    const { data: { subscription } } = sb.auth.onAuthStateChange(
       (event, session) => {
         if (mounted) {
           setSession(session);
@@ -43,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
 
     // THEN check for existing session
-    supabase.auth.getSession()
+    sb.auth.getSession()
       .then(({ data: { session } }) => {
         if (mounted) {
           setSession(session);
@@ -68,9 +76,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signUp = async (email: string, password: string, fullName?: string) => {
+    const sb = getSupabaseClient();
+    if (!sb) return { error: new Error("Backend not configured") };
     const redirectUrl = `${window.location.origin}/`;
     
-    const { error } = await supabase.auth.signUp({
+    const { error } = await sb.auth.signUp({
       email,
       password,
       options: {
@@ -84,7 +94,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
+    const sb = getSupabaseClient();
+    if (!sb) return { error: new Error("Backend not configured") };
+    const { error } = await sb.auth.signInWithPassword({
       email,
       password,
     });
@@ -92,7 +104,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    const sb = getSupabaseClient();
+    if (!sb) return;
+    await sb.auth.signOut();
   };
 
   return (

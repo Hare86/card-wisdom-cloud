@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { supabase } from "@/integrations/supabase/safeClient";
+import { getSupabaseClient } from "@/integrations/supabase/lazyClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
@@ -71,9 +71,15 @@ export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterP
   const fetchActions = useCallback(async () => {
     try {
       setLoading(true);
+
+      const sb = getSupabaseClient();
+      if (!sb) {
+        setActions([]);
+        return;
+      }
       
       // Build query - get actions for selected card OR general actions (no card_id)
-      let query = supabase
+      let query = sb
         .from("user_alerts")
         .select("*")
         .eq("is_read", false)
@@ -147,7 +153,9 @@ export function ActionCenter({ selectedCardId, selectedCardName }: ActionCenterP
 
     // Mark action as read
     try {
-      await supabase
+      const sb = getSupabaseClient();
+      if (!sb) return;
+      await sb
         .from("user_alerts")
         .update({ is_read: true })
         .eq("id", action.id);

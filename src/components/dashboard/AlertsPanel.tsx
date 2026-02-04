@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/safeClient";
+import { getSupabaseClient } from "@/integrations/supabase/lazyClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -86,7 +86,9 @@ export function AlertsPanel() {
 
   const fetchAlerts = async () => {
     try {
-      const { data, error } = await supabase
+      const sb = getSupabaseClient();
+      if (!sb) return;
+      const { data, error } = await sb
         .from("user_alerts")
         .select("*")
         .order("created_at", { ascending: false })
@@ -103,7 +105,9 @@ export function AlertsPanel() {
 
   const markAsRead = async (alertId: string) => {
     try {
-      await supabase
+      const sb = getSupabaseClient();
+      if (!sb) return;
+      await sb
         .from("user_alerts")
         .update({ is_read: true })
         .eq("id", alertId);
@@ -119,7 +123,9 @@ export function AlertsPanel() {
   const dismissAlert = async (alertId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await supabase.from("user_alerts").delete().eq("id", alertId);
+      const sb = getSupabaseClient();
+      if (!sb) return;
+      await sb.from("user_alerts").delete().eq("id", alertId);
       setAlerts((prev) => prev.filter((a) => a.id !== alertId));
       toast({ title: "Alert dismissed" });
     } catch (error) {
@@ -160,7 +166,9 @@ export function AlertsPanel() {
       });
       
       // Mark as read and remove
-      await supabase
+      const sb = getSupabaseClient();
+      if (!sb) return;
+      await sb
         .from("user_alerts")
         .update({ is_read: true })
         .eq("id", alert.id);
