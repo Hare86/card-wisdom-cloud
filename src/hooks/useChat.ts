@@ -73,6 +73,8 @@ export function useChat() {
             .filter((m) => m.id !== "1")
             .concat(userMessage)
             .map((m) => ({ role: m.role, content: m.content })),
+          userId: user?.id, // CRITICAL: Pass user ID for personalized context retrieval
+          includeContext: true,
         }),
       });
 
