@@ -99,6 +99,8 @@ serve(async (req) => {
     // Step 2: Retrieve relevant context using semantic search
     let contextSection = "";
     let allContext: string[] = [];
+    let isPersonalized = false;
+    let contextSources: string[] = [];
 
     if (includeContext && userId) {
       console.log(`Retrieving context for user: ${userId}`);
@@ -110,7 +112,23 @@ serve(async (req) => {
         ...context.benefitsContext,
         ...(context.transactionSummary ? [context.transactionSummary] : []),
       ];
-      console.log(`Context retrieved: ${context.userCards ? 'cards YES' : 'cards NO'}, ${context.transactionSummary ? 'transactions YES' : 'transactions NO'}, docs: ${context.documentChunks.length}, benefits: ${context.benefitsContext.length}`);
+      
+      // Determine personalization status based on user-specific data
+      if (context.userCards) {
+        isPersonalized = true;
+        contextSources.push("cards");
+      }
+      if (context.transactionSummary) {
+        isPersonalized = true;
+        contextSources.push("transactions");
+      }
+      if (context.documentChunks.length > 0) {
+        isPersonalized = true;
+        contextSources.push("statements");
+      }
+      // Note: benefits are global knowledge, not personalized
+      
+      console.log(`Context retrieved: personalized=${isPersonalized}, sources=[${contextSources.join(",")}], cards=${context.userCards ? 'YES' : 'NO'}, transactions=${context.transactionSummary ? 'YES' : 'NO'}, docs=${context.documentChunks.length}, benefits=${context.benefitsContext.length}`);
     } else {
       console.log(`Skipping context: includeContext=${includeContext}, userId=${userId || 'MISSING'}`);
     }
@@ -326,6 +344,8 @@ serve(async (req) => {
           model: selectedModel,
           cached: false,
           followUpQuestions,
+          personalized: isPersonalized,
+          contextSources,
         }),
         {
           status: 200,
