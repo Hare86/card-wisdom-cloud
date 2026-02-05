@@ -15,12 +15,14 @@ const DEFAULT_MATCH_COUNT = 5;
 
 /**
  * Retrieve relevant context using semantic search across all sources
+ * @param selectedCardId - If provided, filter transaction/card data to this card only
  */
 export async function retrieveContext(
   supabase: SupabaseClient,
   query: string,
   userId: string,
-  apiKey: string
+  apiKey: string,
+  selectedCardId?: string
 ): Promise<RetrievedContext> {
   const result: RetrievedContext = {
     documentChunks: [],
@@ -42,10 +44,10 @@ export async function retrieveContext(
         searchDocuments(supabase, vectorString, userId),
         // Semantic search on card benefits knowledge base
         searchBenefits(supabase, vectorString),
-        // Get aggregated transaction data
-        getTransactionSummary(supabase, userId),
-        // Get user's credit cards
-        getUserCards(supabase, userId),
+        // Get aggregated transaction data (filtered by card if selected)
+        getTransactionSummary(supabase, userId, selectedCardId),
+        // Get user's credit cards (filtered if card selected)
+        getUserCards(supabase, userId, selectedCardId),
       ]);
 
       result.documentChunks = docResults;
@@ -57,12 +59,12 @@ export async function retrieveContext(
     } else {
       // Embeddings not available, use fallback retrieval
       console.log("Embeddings not available, using text-based retrieval");
-      return await fallbackRetrieval(supabase, userId);
+      return await fallbackRetrieval(supabase, userId, selectedCardId);
     }
   } catch (error) {
     console.error("Context retrieval error:", error);
     // Fall back to non-semantic retrieval
-    return await fallbackRetrieval(supabase, userId);
+    return await fallbackRetrieval(supabase, userId, selectedCardId);
   }
 
   return result;
@@ -124,16 +126,25 @@ async function searchBenefits(
 
 /**
  * Get aggregated transaction summary for the user
+ * @param selectedCardId - If provided, only include transactions for this card
  */
 async function getTransactionSummary(
   supabase: SupabaseClient,
-  userId: string
+  userId: string,
+  selectedCardId?: string
 ): Promise<string | null> {
-  const { data: transactions, error } = await supabase
+  let query = supabase
     .from("transactions")
-    .select("category, amount, points_earned")
+    .select("category, amount, points_earned, card_id")
     .eq("user_id", userId)
     .limit(200);
+  
+  // Filter by selected card if provided
+  if (selectedCardId) {
+    query = query.eq("card_id", selectedCardId);
+  }
+
+  const { data: transactions, error } = await query;
 
   if (error || !transactions || transactions.length === 0) {
     return null;
@@ -148,20 +159,30 @@ async function getTransactionSummary(
     return acc;
   }, {} as Record<string, { amount: number; points: number; count: number }>);
 
-  return `User spending summary by category: ${JSON.stringify(summary)}`;
+  const prefix = selectedCardId ? "Selected card" : "User";
+  return `${prefix} spending summary by category: ${JSON.stringify(summary)}`;
 }
 
 /**
  * Get user's credit cards with points balances
+ * @param selectedCardId - If provided, only return this specific card
  */
 async function getUserCards(
   supabase: SupabaseClient,
-  userId: string
+  userId: string,
+  selectedCardId?: string
 ): Promise<string | null> {
-  const { data: cards, error } = await supabase
+  let query = supabase
     .from("credit_cards")
-    .select("bank_name, card_name, points, point_value, last_four")
+    .select("id, bank_name, card_name, points, point_value, last_four")
     .eq("user_id", userId);
+  
+  // Filter to specific card if selected
+  if (selectedCardId) {
+    query = query.eq("id", selectedCardId);
+  }
+
+  const { data: cards, error } = await query;
 
   if (error || !cards || cards.length === 0) {
     return null;
@@ -176,7 +197,11 @@ async function getUserCards(
   const totalPoints = cards.reduce((sum, c) => sum + (c.points || 0), 0);
   const totalValue = cards.reduce((sum, c) => sum + ((c.points || 0) * (c.point_value || 0.25)), 0);
 
-  return `User's Credit Cards (${cards.length} cards, ${totalPoints.toLocaleString()} total points, ~₹${totalValue.toFixed(0)} total value):\n${cardsSummary}`;
+  const header = selectedCardId 
+    ? `Selected Card Details` 
+    : `User's Credit Cards (${cards.length} cards, ${totalPoints.toLocaleString()} total points, ~₹${totalValue.toFixed(0)} total value)`;
+
+  return `${header}:\n${cardsSummary}`;
 }
 
 /**
@@ -185,7 +210,8 @@ async function getUserCards(
  */
 async function fallbackRetrieval(
   supabase: SupabaseClient,
-  userId: string
+  userId: string,
+  selectedCardId?: string
 ): Promise<RetrievedContext> {
   console.log("Using fallback non-semantic retrieval with full context");
 
@@ -200,10 +226,10 @@ async function fallbackRetrieval(
       .select("bank_name, card_name, benefit_title, benefit_description")
       .eq("is_active", true)
       .limit(10),
-    // Include transaction summary in fallback
-    getTransactionSummary(supabase, userId),
-    // Include user cards in fallback
-    getUserCards(supabase, userId),
+    // Include transaction summary in fallback (filtered by card if selected)
+    getTransactionSummary(supabase, userId, selectedCardId),
+    // Include user cards in fallback (filtered by card if selected)
+    getUserCards(supabase, userId, selectedCardId),
   ]);
 
   return {

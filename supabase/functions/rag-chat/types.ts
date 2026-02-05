@@ -13,6 +13,8 @@ export interface RagRequest {
   taskType?: "chat" | "analysis" | "recommendation" | "parsing" | "extraction";
   includeContext?: boolean;
   stream?: boolean;
+  selectedCardId?: string;
+  selectedCardName?: string;
 }
 
 export interface RagResponse {
