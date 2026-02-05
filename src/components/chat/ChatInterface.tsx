@@ -16,6 +16,8 @@ interface Message {
   cached?: boolean;
   model?: string;
   followUpQuestions?: string[];
+  personalized?: boolean; // true = used user data, false = generic response
+  contextSources?: string[]; // e.g. ["cards", "transactions", "benefits"]
 }
 
 const suggestedQuestions = [
@@ -129,10 +131,27 @@ function ChatContent({
                   <div className="text-sm prose prose-sm dark:prose-invert max-w-none">
                     <ReactMarkdown>{message.content}</ReactMarkdown>
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <p className="text-xs opacity-50">
                       {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </p>
+                    {/* Personalization indicator */}
+                    {message.role === "assistant" && message.id !== "1" && (
+                      message.personalized ? (
+                        <span className="text-xs px-2 py-0.5 bg-green-500/20 border border-green-500/30 rounded-full text-green-600 dark:text-green-400 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                          Personalized
+                          {message.contextSources && message.contextSources.length > 0 && (
+                            <span className="opacity-70">({message.contextSources.join(", ")})</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-xs px-2 py-0.5 bg-amber-500/20 border border-amber-500/30 rounded-full text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                          General advice
+                        </span>
+                      )
+                    )}
                     {message.cached && (
                       <span className="text-xs px-1.5 py-0.5 bg-primary/20 rounded text-primary">⚡ cached</span>
                     )}
@@ -283,13 +302,28 @@ export function ChatInterface() {
 
     let assistantContent = "";
 
-    const updateAssistant = (chunk: string, cached?: boolean, model?: string, followUpQuestions?: string[]) => {
+    const updateAssistant = (
+      chunk: string, 
+      cached?: boolean, 
+      model?: string, 
+      followUpQuestions?: string[],
+      personalized?: boolean,
+      contextSources?: string[]
+    ) => {
       assistantContent += chunk;
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant" && last.id.startsWith("stream-")) {
           return prev.map((m, i) =>
-            i === prev.length - 1 ? { ...m, content: assistantContent, cached, model, followUpQuestions: followUpQuestions || m.followUpQuestions } : m
+            i === prev.length - 1 ? { 
+              ...m, 
+              content: assistantContent, 
+              cached, 
+              model, 
+              followUpQuestions: followUpQuestions || m.followUpQuestions,
+              personalized: personalized ?? m.personalized,
+              contextSources: contextSources || m.contextSources,
+            } : m
           );
         }
         return [
@@ -302,6 +336,8 @@ export function ChatInterface() {
             cached,
             model,
             followUpQuestions,
+            personalized,
+            contextSources,
           },
         ];
       });
@@ -343,7 +379,14 @@ export function ChatInterface() {
       const contentType = response.headers.get("content-type");
       if (contentType?.includes("application/json")) {
         const data = await response.json();
-        updateAssistant(data.content, data.cached, data.model, data.followUpQuestions);
+        updateAssistant(
+          data.content, 
+          data.cached, 
+          data.model, 
+          data.followUpQuestions,
+          data.personalized,
+          data.contextSources
+        );
         if (data.cached) {
           toast({ title: "⚡ Response from cache", description: "Faster and cheaper!" });
         }
