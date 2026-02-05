@@ -101,6 +101,7 @@ serve(async (req) => {
     let allContext: string[] = [];
 
     if (includeContext && userId) {
+      console.log(`Retrieving context for user: ${userId}`);
       const context = await retrieveContext(supabase, lastMessage, userId, LOVABLE_API_KEY);
       contextSection = buildContextSection(context);
       allContext = [
@@ -109,6 +110,9 @@ serve(async (req) => {
         ...context.benefitsContext,
         ...(context.transactionSummary ? [context.transactionSummary] : []),
       ];
+      console.log(`Context retrieved: ${context.userCards ? 'cards YES' : 'cards NO'}, ${context.transactionSummary ? 'transactions YES' : 'transactions NO'}, docs: ${context.documentChunks.length}, benefits: ${context.benefitsContext.length}`);
+    } else {
+      console.log(`Skipping context: includeContext=${includeContext}, userId=${userId || 'MISSING'}`);
     }
 
     // Step 3: Select appropriate model

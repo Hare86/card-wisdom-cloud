@@ -181,14 +181,15 @@ async function getUserCards(
 
 /**
  * Fallback to simple text retrieval if semantic search fails
+ * IMPORTANT: This must retrieve ALL context sources, not just documents
  */
 async function fallbackRetrieval(
   supabase: SupabaseClient,
   userId: string
 ): Promise<RetrievedContext> {
-  console.log("Using fallback non-semantic retrieval");
+  console.log("Using fallback non-semantic retrieval with full context");
 
-  const [docsResult, benefitsResult] = await Promise.all([
+  const [docsResult, benefitsResult, transactionSummary, userCards] = await Promise.all([
     supabase
       .from("document_chunks")
       .select("chunk_text")
@@ -199,6 +200,10 @@ async function fallbackRetrieval(
       .select("bank_name, card_name, benefit_title, benefit_description")
       .eq("is_active", true)
       .limit(10),
+    // Include transaction summary in fallback
+    getTransactionSummary(supabase, userId),
+    // Include user cards in fallback
+    getUserCards(supabase, userId),
   ]);
 
   return {
@@ -206,8 +211,8 @@ async function fallbackRetrieval(
     benefitsContext: (benefitsResult.data || []).map(
       (b) => `${b.bank_name} ${b.card_name}: ${b.benefit_title} - ${b.benefit_description}`
     ),
-    transactionSummary: null,
-    userCards: null,
+    transactionSummary,
+    userCards,
   };
 }
 
