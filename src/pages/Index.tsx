@@ -346,7 +346,11 @@ const Index = () => {
               selectedCardId={selectedCard?.id} 
               selectedCardName={selectedCard?.cardName} 
             />
-            <ChatInterface />
+            <ChatInterface 
+              selectedCard={selectedCard}
+              availableCards={cards}
+              onSelectCard={(card) => setSelectedCard(card as CardData)}
+            />
           </div>
         </div>
       </main>

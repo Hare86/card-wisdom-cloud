@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, Sparkles, Loader2, Trash2, ThumbsUp, ThumbsDown, Maximize2, Minimize2 } from "lucide-react";
+import { Send, Bot, User, Sparkles, Loader2, Trash2, ThumbsUp, ThumbsDown, Maximize2, Minimize2, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -16,19 +16,21 @@ interface Message {
   cached?: boolean;
   model?: string;
   followUpQuestions?: string[];
-  personalized?: boolean; // true = used user data, false = generic response
-  contextSources?: string[]; // e.g. ["cards", "transactions", "benefits"]
+  personalized?: boolean;
+  contextSources?: string[];
 }
 
-const suggestedQuestions = [
-  "How many points did I earn last month?",
-  "Best redemption for my Infinia points?",
-  "Which card for travel bookings?",
-  "When do my points expire?",
-];
+interface CardInfo {
+  id: string;
+  bankName: string;
+  cardName: string;
+  points: number;
+  lastFour?: string;
+  value?: number;
+  variant?: string;
+}
 
 const getRagChatUrl = () => {
-  // Use env vars with fallback to hardcoded project URL
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID as string | undefined;
   const envUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
   const url = envUrl ?? (projectId ? `https://${projectId}.supabase.co` : "https://sjwdbubmrnsycfgtzhga.supabase.co");
@@ -45,6 +47,9 @@ interface ChatContentProps {
   provideFeedback: (messageId: string, rating: number) => void;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
+  selectedCard?: CardInfo | null;
+  availableCards?: CardInfo[];
+  onSelectCard?: (card: CardInfo) => void;
 }
 
 function ChatContent({
@@ -57,6 +62,9 @@ function ChatContent({
   provideFeedback,
   isExpanded = false,
   onToggleExpand,
+  selectedCard,
+  availableCards = [],
+  onSelectCard,
 }: ChatContentProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -227,12 +235,51 @@ function ChatContent({
         )}
       </div>
 
+      {/* Card Selector - show when no card selected but cards available */}
+      {!selectedCard && availableCards.length > 0 && (
+        <div className="px-4 pb-3">
+          <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
+            <div className="flex items-center gap-2 mb-2">
+              <CreditCard className="w-4 h-4 text-primary" />
+              <p className="text-sm font-medium">Select a card for personalized advice</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {availableCards.slice(0, 4).map((card) => (
+                <button
+                  key={card.id}
+                  onClick={() => onSelectCard?.(card)}
+                  className="text-xs px-3 py-2 bg-background hover:bg-primary/10 border border-border hover:border-primary/50 rounded-lg transition-all flex items-center gap-2"
+                >
+                  <span className="font-medium">{card.bankName}</span>
+                  <span className="text-muted-foreground">{card.cardName}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Selected Card Indicator */}
+      {selectedCard && messages.length <= 2 && (
+        <div className="px-4 pb-2">
+          <div className="inline-flex items-center gap-2 text-xs px-3 py-1.5 bg-primary/10 border border-primary/20 rounded-full text-primary">
+            <CreditCard className="w-3 h-3" />
+            <span>Asking about <strong>{selectedCard.bankName} {selectedCard.cardName}</strong></span>
+          </div>
+        </div>
+      )}
+
       {/* Suggestions */}
-      {messages.length <= 2 && (
+      {messages.length <= 2 && selectedCard && (
         <div className="px-4 pb-2">
           <p className="text-xs text-muted-foreground mb-2">Suggested:</p>
           <div className="flex flex-wrap gap-2">
-            {suggestedQuestions.map((q, i) => (
+            {[
+              `How many points did I earn on my ${selectedCard.cardName}?`,
+              `Best redemption for my ${selectedCard.cardName} points?`,
+              `What benefits does my ${selectedCard.cardName} have?`,
+              "When do my points expire?",
+            ].map((q, i) => (
               <button
                 key={i}
                 onClick={() => setInput(q)}
@@ -270,7 +317,13 @@ function ChatContent({
   );
 }
 
-export function ChatInterface() {
+interface ChatInterfaceProps {
+  selectedCard?: CardInfo | null;
+  availableCards?: CardInfo[];
+  onSelectCard?: (card: CardInfo) => void;
+}
+
+export function ChatInterface({ selectedCard, availableCards = [], onSelectCard }: ChatInterfaceProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -361,6 +414,8 @@ export function ChatInterface() {
           taskType: "chat",
           includeContext: true,
           stream: true,
+          selectedCardId: selectedCard?.id,
+          selectedCardName: selectedCard ? `${selectedCard.bankName} ${selectedCard.cardName}` : undefined,
         }),
       });
 
@@ -499,6 +554,9 @@ export function ChatInterface() {
     sendMessage,
     clearMessages,
     provideFeedback,
+    selectedCard,
+    availableCards,
+    onSelectCard,
   };
 
   return (

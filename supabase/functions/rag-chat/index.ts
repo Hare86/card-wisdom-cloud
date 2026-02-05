@@ -49,10 +49,13 @@ serve(async (req) => {
       taskType = "chat",
       includeContext = true,
       stream = true,
+      selectedCardId,
+      selectedCardName,
     }: RagRequest = await req.json();
 
     const lastMessage = messages[messages.length - 1]?.content || "";
-    console.log(`Processing ${taskType} query: ${lastMessage.substring(0, 50)}...`);
+    console.log(`Processing ${taskType} query: ${lastMessage.substring(0, 50)}... (card: ${selectedCardName || 'all'})`);
+
 
     // Step 1: Check semantic cache (hybrid exact + vector search)
     const cachedResponse = await checkSemanticCache(supabase, lastMessage, LOVABLE_API_KEY);
@@ -103,8 +106,8 @@ serve(async (req) => {
     let contextSources: string[] = [];
 
     if (includeContext && userId) {
-      console.log(`Retrieving context for user: ${userId}`);
-      const context = await retrieveContext(supabase, lastMessage, userId, LOVABLE_API_KEY);
+      console.log(`Retrieving context for user: ${userId}, card: ${selectedCardId || 'all'}`);
+      const context = await retrieveContext(supabase, lastMessage, userId, LOVABLE_API_KEY, selectedCardId);
       contextSection = buildContextSection(context);
       allContext = [
         ...(context.userCards ? [context.userCards] : []),
