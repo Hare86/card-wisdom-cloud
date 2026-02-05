@@ -22,7 +22,8 @@ export async function retrieveContext(
   query: string,
   userId: string,
   apiKey: string,
-  selectedCardId?: string
+  selectedCardId?: string,
+  selectedCardName?: string
 ): Promise<RetrievedContext> {
   const result: RetrievedContext = {
     documentChunks: [],
@@ -42,8 +43,8 @@ export async function retrieveContext(
       const [docResults, benefitsResults, transactionResults, userCardsData] = await Promise.all([
         // Semantic search on user's document chunks
         searchDocuments(supabase, vectorString, userId),
-        // Semantic search on card benefits knowledge base
-        searchBenefits(supabase, vectorString),
+        // Semantic search on card benefits knowledge base (optionally filtered to the selected card)
+        searchBenefits(supabase, vectorString, selectedCardName),
         // Get aggregated transaction data (filtered by card if selected)
         getTransactionSummary(supabase, userId, selectedCardId),
         // Get user's credit cards (filtered if card selected)
@@ -59,12 +60,12 @@ export async function retrieveContext(
     } else {
       // Embeddings not available, use fallback retrieval
       console.log("Embeddings not available, using text-based retrieval");
-      return await fallbackRetrieval(supabase, userId, selectedCardId);
+      return await fallbackRetrieval(supabase, userId, selectedCardId, selectedCardName);
     }
   } catch (error) {
     console.error("Context retrieval error:", error);
     // Fall back to non-semantic retrieval
-    return await fallbackRetrieval(supabase, userId, selectedCardId);
+    return await fallbackRetrieval(supabase, userId, selectedCardId, selectedCardName);
   }
 
   return result;
@@ -100,7 +101,8 @@ async function searchDocuments(
  */
 async function searchBenefits(
   supabase: SupabaseClient,
-  queryVector: string
+  queryVector: string,
+  selectedCardName?: string
 ): Promise<string[]> {
   const { data, error } = await supabase.rpc("search_benefits", {
     query_emb: queryVector,
@@ -112,7 +114,9 @@ async function searchBenefits(
     return [];
   }
 
-  return (data || []).map((b: {
+  type BenefitHit = { key: string; text: string };
+
+  const all: BenefitHit[] = (data || []).map((b: {
     bank_name: string;
     card_name: string;
     benefit_title: string;
@@ -120,8 +124,29 @@ async function searchBenefits(
     similarity: number;
   }) => {
     const similarityPct = (b.similarity * 100).toFixed(0);
-    return `[Match: ${similarityPct}%] ${b.bank_name} ${b.card_name}: ${b.benefit_title} - ${b.benefit_description}`;
+    return {
+      key: `${b.bank_name} ${b.card_name}`.toLowerCase(),
+      text: `[Match: ${similarityPct}%] ${b.bank_name} ${b.card_name}: ${b.benefit_title} - ${b.benefit_description}`,
+    };
   });
+
+  // If a card is selected, keep benefits tightly scoped to that card name.
+  // (This prevents the model from mixing in other banks/cards for card-specific questions.)
+  if (selectedCardName) {
+    const selectedKey = selectedCardName.toLowerCase().trim();
+    const filtered = all.filter(
+      (x: BenefitHit) => x.key === selectedKey || x.key.includes(selectedKey) || selectedKey.includes(x.key)
+    );
+
+    const byBankFallback = all.filter((x: BenefitHit) => {
+      const bankToken = selectedKey.split(" ")[0] || "";
+      return bankToken ? x.key.includes(bankToken) : false;
+    });
+
+    return (filtered.length > 0 ? filtered : byBankFallback).map((x: BenefitHit) => x.text);
+  }
+
+  return all.map((x: BenefitHit) => x.text);
 }
 
 /**
@@ -211,7 +236,8 @@ async function getUserCards(
 async function fallbackRetrieval(
   supabase: SupabaseClient,
   userId: string,
-  selectedCardId?: string
+  selectedCardId?: string,
+  selectedCardName?: string
 ): Promise<RetrievedContext> {
   console.log("Using fallback non-semantic retrieval with full context");
 
@@ -225,18 +251,24 @@ async function fallbackRetrieval(
       .from("card_benefits")
       .select("bank_name, card_name, benefit_title, benefit_description")
       .eq("is_active", true)
-      .limit(10),
+      .limit(25),
     // Include transaction summary in fallback (filtered by card if selected)
     getTransactionSummary(supabase, userId, selectedCardId),
     // Include user cards in fallback (filtered by card if selected)
     getUserCards(supabase, userId, selectedCardId),
   ]);
 
+  const allBenefits = (benefitsResult.data || []).map(
+    (b) => `${b.bank_name} ${b.card_name}: ${b.benefit_title} - ${b.benefit_description}`
+  );
+
+  const benefitsContext = selectedCardName
+    ? allBenefits.filter((t) => t.toLowerCase().includes(selectedCardName.toLowerCase()))
+    : allBenefits;
+
   return {
     documentChunks: (docsResult.data || []).map((d) => d.chunk_text),
-    benefitsContext: (benefitsResult.data || []).map(
-      (b) => `${b.bank_name} ${b.card_name}: ${b.benefit_title} - ${b.benefit_description}`
-    ),
+    benefitsContext,
     transactionSummary,
     userCards,
   };

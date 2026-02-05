@@ -17,9 +17,10 @@ const CACHE_TTL_DAYS = 7;
 /**
  * Generate SHA-256 hash for exact cache matching
  */
-export async function generateCacheKey(query: string): Promise<string> {
+export async function generateCacheKey(query: string, scope: string = ""): Promise<string> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(query.toLowerCase().trim());
+  // Scope the cache to avoid cross-user / cross-card leakage (e.g., same question with different card selected)
+  const data = encoder.encode(`${scope}::${query.toLowerCase().trim()}`);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -33,10 +34,12 @@ export async function generateCacheKey(query: string): Promise<string> {
 export async function checkSemanticCache(
   supabase: SupabaseClient,
   query: string,
-  apiKey: string
+  apiKey: string,
+  scope: string = ""
 ): Promise<CacheEntry | null> {
   // Step 1: Try exact hash match first (free, no embedding cost)
-  const cacheKey = await generateCacheKey(query);
+  const cacheKey = await generateCacheKey(query, scope);
+
   
   const { data: exactMatch } = await supabase
     .from("query_cache")
@@ -101,10 +104,12 @@ export async function storeInCache(
   model: string,
   tokensInput: number,
   tokensOutput: number,
-  apiKey: string
+  apiKey: string,
+  scope: string = ""
 ): Promise<void> {
   try {
-    const cacheKey = await generateCacheKey(query);
+    const cacheKey = await generateCacheKey(query, scope);
+
     
     // Generate embedding for semantic search
     const { embedding } = await generateEmbedding(query, apiKey);

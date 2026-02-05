@@ -58,7 +58,10 @@ serve(async (req) => {
 
 
     // Step 1: Check semantic cache (hybrid exact + vector search)
-    const cachedResponse = await checkSemanticCache(supabase, lastMessage, LOVABLE_API_KEY);
+    // IMPORTANT: cache MUST be scoped by user + selected card to avoid reusing generic answers.
+    const cacheScope = `${userId || "anon"}:${selectedCardId || "all"}`;
+    const cachedResponse = await checkSemanticCache(supabase, lastMessage, LOVABLE_API_KEY, cacheScope);
+
 
     if (cachedResponse) {
       console.log(`Cache hit! Similarity: ${((cachedResponse.similarity || 1) * 100).toFixed(1)}%`);
@@ -107,7 +110,8 @@ serve(async (req) => {
 
     if (includeContext && userId) {
       console.log(`Retrieving context for user: ${userId}, card: ${selectedCardId || 'all'}`);
-      const context = await retrieveContext(supabase, lastMessage, userId, LOVABLE_API_KEY, selectedCardId);
+      const context = await retrieveContext(supabase, lastMessage, userId, LOVABLE_API_KEY, selectedCardId, selectedCardName);
+
       contextSection = buildContextSection(context);
       allContext = [
         ...(context.userCards ? [context.userCards] : []),
@@ -223,7 +227,8 @@ serve(async (req) => {
             selectedModel,
             tokensInput,
             tokensOutput,
-            LOVABLE_API_KEY
+            LOVABLE_API_KEY,
+            cacheScope
           );
 
           // Log token usage
@@ -307,7 +312,8 @@ serve(async (req) => {
         selectedModel,
         tokensInput,
         tokensOutput,
-        LOVABLE_API_KEY
+        LOVABLE_API_KEY,
+        cacheScope
       );
 
       // Log usage and evaluation
