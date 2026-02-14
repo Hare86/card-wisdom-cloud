@@ -234,17 +234,15 @@ const Index = () => {
           />
           <StatsCard
             title="Monthly Earned"
-            value={cards.length > 0 ? "4,350" : "—"}
-            subtitle={cards.length > 0 ? "pts this month" : "No activity"}
+            value="—"
+            subtitle="Upload statements to track"
             icon={TrendingUp}
-            trend={cards.length > 0 ? { value: "23%", positive: true } : undefined}
           />
           <StatsCard
             title="Expiring Soon"
-            value={cards.length > 0 ? "1,250" : "—"}
-            subtitle={cards.length > 0 ? "pts in 15 days" : "Nothing expiring"}
+            value="—"
+            subtitle="No expiry data available"
             icon={Clock}
-            variant={cards.length > 0 ? "warning" : "default"}
           />
         </div>
 
